@@ -9,7 +9,7 @@ use crate::submission_object::SubmissionObject;
 
 mod assignment;
 mod container;
-mod docker;
+mod image;
 mod response_object;
 mod submission_object;
 

@@ -1,12 +1,11 @@
 use std::{
-    collections::HashMap,
     fs::{copy, create_dir, create_dir_all, read_dir, read_to_string, remove_dir_all, write},
     path::PathBuf,
 };
 
 use tracing::{error, info, warn};
 
-use crate::{assignment::Assignment, docker::DockerBuilder, response_object::ResponseObject, submission_object::SubmissionObject};
+use crate::{assignment::Assignment, image::ImageBuilder, response_object::ResponseObject, submission_object::SubmissionObject};
 
 // Supported Languages
 // pub enum Language {
@@ -63,7 +62,7 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
     let toml_assignment = read_to_string(format!("{}/assignment.toml", assignment_dir)).unwrap();
     let assignment = toml::from_str::<Assignment>(&toml_assignment).unwrap();
 
-    let image = DockerBuilder::new(&workdir).build().unwrap();
+    let image = ImageBuilder::new(&workdir).build().unwrap();
     info!("Removing working directory {workdir}");
     remove_dir_all(&workdir).unwrap();
 
