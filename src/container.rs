@@ -101,7 +101,7 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
             Ok(s) => s,
             Err(e) => {
                 test_results.err(test_name, e);
-                return Ok(test_results);
+                continue;
             }
         };
         
@@ -117,7 +117,7 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
                 container_output.trim()
             );
             if test.public {
-                test_results.pub_fail(test_name, input, output.trim(), container_output);
+                test_results.pub_fail(test_name, input.trim(), output.trim(), container_output.trim());
             } else {
                 test_results.fail(test_name);
             }

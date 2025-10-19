@@ -1,11 +1,9 @@
 use std::{
-    ffi::OsString,
-    io::{Stdin, Write},
-    path::PathBuf,
+    io::Write,
     process::{Command, Stdio},
 };
 
-use tracing::{debug, error, info};
+use tracing::{error, info, warn};
 
 pub struct DockerBuilder {
     tag: Option<String>,
@@ -47,9 +45,7 @@ impl DockerBuilder {
             .to_owned();
         info!("Image {image_id} created");
 
-        Ok(DockerContainer {
-            image_id,
-        })
+        Ok(DockerContainer { image_id })
     }
 }
 
@@ -74,7 +70,7 @@ impl DockerContainer {
                 .unwrap()
                 .trim()
                 .to_string();
-            error!("Error running container {}: {}", self.image_id, err_str);
+            warn!("Error running container {}: {}", self.image_id, err_str);
 
             return Err(err_str);
         }
@@ -88,15 +84,13 @@ impl DockerContainer {
 impl Drop for DockerContainer {
     fn drop(&mut self) {
         info!("Pruning containers...");
-        let pruned_amount = Command::new("docker")
+        Command::new("docker")
             .args(["container", "prune", "-f"])
             .spawn()
             .unwrap()
             .wait_with_output()
             .unwrap()
             .stdout;
-
-        info!("{}", String::from_utf8(pruned_amount).unwrap().trim());
 
         info!("Removing image {}.", self.image_id);
         let rm_output = Command::new("docker")

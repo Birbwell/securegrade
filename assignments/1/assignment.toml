@@ -18,3 +18,8 @@ public = true
 [tests.WrongPrivate]
 input = "wubba wubba"
 output = "Intentionally Wrong"
+
+[tests.RightPrivate]
+input = "sun and moon"
+output = "noom dna nus"
+public = true

@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 enum TestStatus {
     Pass,
     Fail,
-    PubFail(String, String, String),
+    PubFail {
+        input: String,
+        expected: String,
+        found: String,
+    },
     Err(String),
 }
 
@@ -31,7 +35,11 @@ impl ResponseObject {
     ) {
         self.tests.push((
             test_name.into(),
-            TestStatus::PubFail(input.into(), expected.into(), found.into()),
+            TestStatus::PubFail {
+                input: input.into(),
+                expected: expected.into(),
+                found: found.into(),
+            },
         ));
     }
 
