@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 enum TestStatus {
     Pass,
     Fail,
-    PubFail(String, String),
+    PubFail(String, String, String),
     Err(String),
 }
 
@@ -25,12 +25,13 @@ impl ResponseObject {
     pub fn pub_fail(
         &mut self,
         test_name: impl Into<String>,
+        input: impl Into<String>,
         expected: impl Into<String>,
         found: impl Into<String>,
     ) {
         self.tests.push((
             test_name.into(),
-            TestStatus::PubFail(expected.into(), found.into()),
+            TestStatus::PubFail(input.into(), expected.into(), found.into()),
         ));
     }
 

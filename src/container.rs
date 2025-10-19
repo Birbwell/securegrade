@@ -97,7 +97,7 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
         };
 
         // let Ok(container_output) = image.exec(input).unwrap();
-        let container_output = match image.exec(input) {
+        let container_output = match image.exec(input.clone()) {
             Ok(s) => s,
             Err(e) => {
                 test_results.err(test_name, e);
@@ -117,7 +117,7 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
                 container_output.trim()
             );
             if test.public {
-                test_results.pub_fail(test_name, output.trim(), container_output.trim());
+                test_results.pub_fail(test_name, input, output.trim(), container_output);
             } else {
                 test_results.fail(test_name);
             }
