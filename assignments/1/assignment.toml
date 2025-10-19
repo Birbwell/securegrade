@@ -3,6 +3,9 @@ name = "Assignment 1"
 description = "Reverse the input."
 
 [tests."Test 1"]
-input = "hey!"
-input_file = "test1.txt"
+input_file = "test1.in"
 output = "oofamoodaks"
+
+[tests."Test 2"]
+input = "smay"
+output_file = "test2.out"
