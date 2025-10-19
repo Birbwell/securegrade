@@ -1,0 +1,8 @@
+[preferences]
+name = "Assignment 1"
+description = "Reverse the input."
+
+[tests."Test 1"]
+input = "hey!"
+input_file = "test1.txt"
+output = "oofamoodaks"

@@ -1,0 +1,43 @@
+2025-10-19T02:21:30.931824Z TRACE axum::serve: connection 127.0.0.1:33058 accepted
+2025-10-19T02:21:30.932059Z  INFO grader::container: Writing /tmp/B01015815-1//main.py
+2025-10-19T02:21:31.535869Z  INFO grader::docker: Image sha256:79368c103b592c5abb684d4075b63c818f896db0089a55f07c3e4b672d2ca888 created
+2025-10-19T02:21:32.063484Z ERROR grader::docker: Error running container sha256:79368c103b592c5abb684d4075b63c818f896db0089a55f07c3e4b672d2ca888: Traceback (most recent call last):
+  File "/app/main.py", line 1, in <module>
+    import pandas
+ModuleNotFoundError: No module named 'pandas'
+2025-10-19T02:21:32.063500Z  INFO grader::docker: Pruning containers...
+Deleted Containers:
+53478861b2068f852916df4e74fcac9573091801f4f80be8a481591863273731
+
+Total reclaimed space: 671.6kB
+2025-10-19T02:21:32.176175Z  INFO grader::docker: 
+2025-10-19T02:21:32.176191Z  INFO grader::docker: Cleaning container sha256:79368c103b592c5abb684d4075b63c818f896db0089a55f07c3e4b672d2ca888
+Deleted: sha256:79368c103b592c5abb684d4075b63c818f896db0089a55f07c3e4b672d2ca888
+2025-10-19T02:21:32.183231Z ERROR grader::container: B01015815-1 => Failed to run: Traceback (most recent call last):
+  File "/app/main.py", line 1, in <module>
+    import pandas
+ModuleNotFoundError: No module named 'pandas'
+2025-10-19T02:21:45.509792Z TRACE axum::serve: connection 127.0.0.1:38938 accepted
+2025-10-19T02:21:45.509999Z  INFO grader::container: Writing /tmp/B01015815-1//Cargo.toml
+2025-10-19T02:21:45.510023Z  INFO grader::container: Writing /tmp/B01015815-1/src/main.rs
+2025-10-19T02:21:45.510037Z  INFO grader::container: Writing /tmp/B01015815-1//Cargo.lock
+2025-10-19T02:21:45.510049Z  INFO grader::container: Writing /tmp/B01015815-1/target/CACHEDIR.TAG
+2025-10-19T02:21:45.510061Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/.cargo-lock
+2025-10-19T02:21:45.510073Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/deps/rust_project-934c46a1df333b87.d
+2025-10-19T02:21:45.510087Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/incremental/rust_project-1sjq5f9ucp8k3/s-hc5p8i51e3-16rs8ik.lock
+2025-10-19T02:21:45.510104Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/.fingerprint/rust_project-934c46a1df333b87/invoked.timestamp
+2025-10-19T02:21:45.510121Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/.fingerprint/rust_project-934c46a1df333b87/bin-rust_project
+2025-10-19T02:21:45.510134Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/.fingerprint/rust_project-934c46a1df333b87/bin-rust_project.json
+2025-10-19T02:21:45.510146Z  INFO grader::container: Writing /tmp/B01015815-1/target/debug/rust_project.d
+2025-10-19T02:21:45.510158Z  INFO grader::container: Writing /tmp/B01015815-1/target/.rustc_info.json
+2025-10-19T02:21:46.337055Z  INFO grader::docker: Image sha256:1b9b11b06fb4b571790e35c30744674582683633eeb43bd9f9618732922ec945 created
+2025-10-19T02:21:46.946825Z  INFO grader::docker: Pruning containers...
+Deleted Containers:
+e1f305267b09f66b3d3258c629b7771941de1bf02e5dc7692d96de23479a3c5f
+
+Total reclaimed space: 606.1kB
+2025-10-19T02:21:47.025812Z  INFO grader::docker: 
+2025-10-19T02:21:47.025826Z  INFO grader::docker: Removing image sha256:1b9b11b06fb4b571790e35c30744674582683633eeb43bd9f9618732922ec945.
+Deleted: sha256:1b9b11b06fb4b571790e35c30744674582683633eeb43bd9f9618732922ec945
+2025-10-19T02:21:47.032953Z  INFO grader::container: B01015815-1 =>
+This is from rust!
