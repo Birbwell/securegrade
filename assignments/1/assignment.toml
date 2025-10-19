@@ -2,10 +2,19 @@
 name = "Assignment 1"
 description = "Reverse the input."
 
-[tests."Test 1"]
+[tests.SimpleFirst]
 input_file = "test1.in"
 output = "oofamoodaks"
 
-[tests."Test 2"]
+[tests.SimpleSecond]
 input = "smay"
 output_file = "test2.out"
+
+[tests.WrongPublic]
+input = "smay"
+output = "Intentionally Wrong"
+public = true
+
+[tests.WrongPrivate]
+input = "wubba wubba"
+output = "Intentionally Wrong"

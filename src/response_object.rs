@@ -1,15 +1,41 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum Status {
-    Ok,
-    Err
+enum TestStatus {
+    Pass,
+    Fail,
+    PubFail(String, String),
+    Err(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ResponseObject {
-    status: Status,
-    score: Option<f32>,
-    tests: Vec<(String, bool)>,
-    error_message: Option<String>
+    tests: Vec<(String, TestStatus)>,
+}
+
+impl ResponseObject {
+    pub fn pass(&mut self, test_name: impl Into<String>) {
+        self.tests.push((test_name.into(), TestStatus::Pass));
+    }
+
+    pub fn fail(&mut self, test_name: impl Into<String>) {
+        self.tests.push((test_name.into(), TestStatus::Fail));
+    }
+
+    pub fn pub_fail(
+        &mut self,
+        test_name: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) {
+        self.tests.push((
+            test_name.into(),
+            TestStatus::PubFail(expected.into(), found.into()),
+        ));
+    }
+
+    pub fn err(&mut self, test_name: impl Into<String>, error_msg: impl Into<String>) {
+        self.tests
+            .push((test_name.into(), TestStatus::Err(error_msg.into())));
+    }
 }

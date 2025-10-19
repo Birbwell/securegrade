@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use test::Test;
 use preferences::Preferences;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use test::Test;
 
 mod preferences;
 mod test;
@@ -9,5 +9,5 @@ mod test;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Assignment {
     preferences: Preferences,
-    pub tests: HashMap<String, Test>
+    pub tests: BTreeMap<String, Test>,
 }

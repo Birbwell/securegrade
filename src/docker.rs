@@ -25,16 +25,7 @@ impl DockerBuilder {
         }
     }
 
-    pub fn tag(self, tag: impl Into<String>) -> DockerBuilder {
-        Self {
-            tag: Some(tag.into()),
-            ..self
-        }
-    }
-
-    /// Build the docker container, run it, and wait for output.
-    /// If this returns an Err, that means a non-logic-based error occured: compilation failure, runtime error, and the like.
-    /// The instructor can choose if they want this to deduct from attempt counter.
+    /// Build the docker container object
     pub fn build(self) -> Result<DockerContainer, String> {
         let container = Command::new("docker")
             .args(["buildx", "build", "-q", &self.directory])
@@ -63,11 +54,13 @@ impl DockerBuilder {
 }
 
 impl DockerContainer {
+    /// Runs the docker container with the provided input
     pub fn exec(&self, stdin: String) -> Result<String, String> {
         let mut child = Command::new("docker")
             .args(["run", "-i", &self.image_id])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
 
@@ -94,7 +87,7 @@ impl DockerContainer {
 
 impl Drop for DockerContainer {
     fn drop(&mut self) {
-        info!("Deleting containers...");
+        info!("Pruning containers...");
         let pruned_amount = Command::new("docker")
             .args(["container", "prune", "-f"])
             .spawn()

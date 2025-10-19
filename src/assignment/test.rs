@@ -6,4 +6,6 @@ pub struct Test {
     pub output: Option<String>,
     pub input_file: Option<String>,
     pub output_file: Option<String>,
+    #[serde(default)]
+    pub public: bool,
 }
