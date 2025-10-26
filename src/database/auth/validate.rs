@@ -1,5 +1,4 @@
 use chrono::Utc;
-use sha2::{Digest, Sha512};
 use sqlx::Row;
 
 use crate::{database::POSTGRES, model::validation_object::ValidationObject};
