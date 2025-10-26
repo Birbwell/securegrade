@@ -3,11 +3,10 @@ use std::{
     process::{Command, Stdio},
 };
 
-use tokio::time::{Duration, timeout};
-use tracing::{debug, error, info, warn};
+use tokio::time::Duration;
+use tracing::{error, info, warn};
 
 pub struct ImageBuilder {
-    tag: Option<String>,
     directory: String,
 }
 
@@ -20,7 +19,6 @@ impl ImageBuilder {
     pub fn new(directory: impl Into<String>) -> ImageBuilder {
         Self {
             directory: directory.into(),
-            tag: None,
         }
     }
 

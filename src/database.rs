@@ -1,10 +1,13 @@
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::env::var;
-use std::sync::{Mutex, OnceLock};
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 
-mod user;
+pub mod auth;
+pub mod operations;
+pub mod user;
 
-static POSTGRES: Mutex<OnceLock<Pool<Postgres>>> = Mutex::new(OnceLock::new());
+static POSTGRES: LazyLock<Mutex<Option<Pool<Postgres>>>> = LazyLock::new(|| Mutex::new(None));
 
 pub async fn init_database() -> Result<(), String> {
     let Ok(name) = var("PSQL_NAME") else {
@@ -41,19 +44,31 @@ pub async fn init_database() -> Result<(), String> {
             .await
             .unwrap();
 
-        if let Err(e) = sqlx::query("CREATE TABLE IF NOT EXISTS users(
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS citext;")
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
             first_name TEXT NOT NULL,
             last_name TEXT NOT NULL,
+            user_name TEXT NOT NULL UNIQUE,
+            email CITEXT NOT NULL UNIQUE,
             is_admin BOOLEAN DEFAULT FALSE
-        );").execute(&mut *transaction).await {
+        );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
             return Err(format!("Failed to create user table: {e}"));
         };
 
         // Create a table for the classes
         if let Err(e) = sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS classes(
-            class_number TEXT PRIMARY KEY
+            r#"CREATE TABLE IF NOT EXISTS classes (
+            class_number CITEXT PRIMARY KEY
         );"#,
         )
         .execute(&mut *transaction)
@@ -63,29 +78,44 @@ pub async fn init_database() -> Result<(), String> {
         }
 
         // Create a table for the user-class associations
-        if let Err(e) = sqlx::query(r#"CREATE TABLE IF NOT EXISTS user_class (
+        if let Err(e) = sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS user_class (
             user_id INTEGER REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
-            class_number TEXT REFERENCES classes (class_number) ON UPDATE CASCADE ON DELETE CASCADE,
+            class_number CITEXT REFERENCES classes (class_number) ON UPDATE CASCADE ON DELETE CASCADE,
             is_instructor BOOLEAN NOT NULL,
             CONSTRAINT student_class_pkey PRIMARY KEY (user_id, class_number)
-        );"#).execute(&mut *transaction).await {
+        );"#,
+        )
+        .execute(&mut *transaction)
+        .await
+        {
             return Err(format!("Could not create association table: {e}"));
         }
 
         // Create the authentication table
-        if let Err(e) = sqlx::query("CREATE TABLE IF NOT EXISTS auth_user (
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_auth (
             hash BYTEA PRIMARY KEY,
             user_id INTEGER REFERENCES users (id)
-        );").execute(&mut *transaction).await {
+        );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
             return Err(format!("Could not create auth table: {e}"));
         }
 
         // Create the session table
-        if let Err(e) = sqlx::query("CREATE TABLE IF NOT EXISTS sessions(
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_session (
             session_hash BYTEA PRIMARY KEY,
-            user_id INTEGER REFERENCES users (id),
-            expiration TIMESTAMPTZ NOT NULL
-        );").execute(&mut *transaction).await {
+            expiration TIMESTAMPTZ NOT NULL,
+            user_id INTEGER REFERENCES users (id)
+        );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
             return Err(format!("Could not create session table: {e}"));
         }
 
@@ -94,8 +124,10 @@ pub async fn init_database() -> Result<(), String> {
         };
     }
 
-    if let Ok(lock) = POSTGRES.lock() {
-        lock.get_or_init(|| pool);
+    let mut lock = POSTGRES.lock().await;
+
+    if lock.is_none() {
+        *lock = Some(pool);
     }
 
     Ok(())

@@ -1,25 +1,28 @@
-use std::fs::read_dir;
 use std::net::SocketAddr;
-use std::sync::{LazyLock, Mutex, RwLock};
+use std::sync::Mutex;
 
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use serde_json::Value;
-use tracing::{Level, debug};
+use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::assignment::Assignment;
 use crate::container::run_container;
-use crate::response_object::ResponseObject;
-use crate::submission_object::SubmissionObject;
+use crate::database::auth::session::Session;
+use crate::model::add_to_class_object::AddToClassObject;
+use crate::model::login_object::LoginObject;
+use crate::model::new_class_object::NewClassObject;
+use crate::model::new_user_object::NewUserObject;
+use crate::model::response_object::ResponseObject;
+use crate::model::submission_object::SubmissionObject;
 
 mod assignment;
 mod container;
 mod database;
 mod image;
-mod response_object;
-mod submission_object;
+mod model;
 
 static NEXT_ID: Mutex<u32> = Mutex::new(0);
 
@@ -38,14 +41,23 @@ async fn main() {
         .route("/add_assignment", post(add_assignment))
         .route("/update_assignment", put(update_assignment))
         .route("/get_assignments", get(get_assignments))
-        .route("/add_user", post(add_student));
+        .route("/login", get(login))
+        .route("/signup", post(signup))
+        .route("/instructor/add_instructor", post(add_instructor))
+        .route("/instructor/add_student", post(add_student))
+        .route("/admin/create_class", post(create_class));
 
     let config =
         RustlsConfig::from_pem_file("aeskul.net_certificate.cer", "aeskul.net_private_key.key")
             .await
             .unwrap();
 
-    database::init_database().await.unwrap();
+    if let Err(e) = database::init_database().await {
+        tracing::error!("{}", e);
+        return;
+    };
+
+    info!("Database initialized");
 
     let server = axum_server::bind_rustls("0.0.0.0:443".parse::<SocketAddr>().unwrap(), config);
     server.serve(app.into_make_service()).await.unwrap()
@@ -57,7 +69,6 @@ async fn receive_submission(json_submission: String) -> Result<Json<ResponseObje
 }
 
 async fn add_assignment(toml: String) -> Result<String, String> {
-    // let id = NEXT_ID.lock().unwrap().clone();
     let id = if let Ok(mut next_id) = NEXT_ID.lock() {
         *next_id += 1;
         next_id.clone()
@@ -114,6 +125,39 @@ async fn update_assignment(assignment_json: String) -> Result<String, String> {
     Ok("true".into())
 }
 
-async fn add_student(student_json: String) {
+async fn create_class(class_data: String) -> Result<String, String> {
+    let class_obj = serde_json::from_str::<NewClassObject>(&class_data).unwrap();
+    if let Err(e) = database::operations::new_class(class_obj).await {
+        return Err(format!("Could not create new class: {e}"));
+    };
+    Ok("true".into())
+}
 
+async fn add_student(instructor_data: String) -> Result<String, String> {
+    let student_obj = serde_json::from_str::<AddToClassObject>(&instructor_data).unwrap();
+    if let Err(e) = database::operations::add_student(student_obj).await {
+        return Err(format!("Could not add instructor: {e}"));
+    }
+    Ok("true".into())
+}
+
+async fn add_instructor(instructor_data: String) -> Result<String, String> {
+    let instructor_obj = serde_json::from_str::<AddToClassObject>(&instructor_data).unwrap();
+    if let Err(e) = database::operations::add_instructor(instructor_obj).await {
+        return Err(format!("Could not add instructor: {e}"));
+    }
+    Ok("true".into())
+}
+
+async fn login(login_data: String) -> Result<Json<Session>, String> {
+    let login_obj = serde_json::from_str::<LoginObject>(&login_data).unwrap();
+    let session_token = database::user::login_user(login_obj).await.unwrap();
+    Ok(Json(Session::new(session_token)))
+}
+
+async fn signup(signup_data: String) -> Result<Json<Session>, String> {
+    info!("Signup Request Received");
+    let signin_obj = serde_json::from_str::<NewUserObject>(&signup_data).unwrap();
+    let session_token = database::user::register_user(signin_obj).await.unwrap();
+    Ok(Json(Session::new(session_token)))
 }

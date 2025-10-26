@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
-use crate::database;
+use crate::model::{login_object::LoginObject, new_user_object::NewUserObject};
 
 use super::POSTGRES;
 
@@ -17,32 +17,31 @@ fn create_hash(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Vec<u
     Sha512::digest(secret_sauce).to_vec()
 }
 
-async fn register_user(
-    user_name: impl Into<Vec<u8>>,
-    pass: impl Into<Vec<u8>>,
-    first_name: impl Into<String>,
-    last_name: impl Into<String>,
-    is_instructor: Option<bool>,
-) {
-    let b = is_instructor.unwrap_or_default();
+pub async fn register_user(new_user: NewUserObject) -> Result<[u8; 16], String> {
+    let hash = create_hash(new_user.user_name.clone(), new_user.pass.clone());
 
-    let hash = create_hash(user_name, pass);
+    {
+        let postgres_pool = POSTGRES.lock().await;
+        if let Some(transaction) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+            let Ok(mut transaction) = transaction.await else {
+                // return Err("Unable to lock transaction".into())
+                panic!();
+            };
 
-    if let Ok(postgres_pool) = POSTGRES.lock() {
-        if let Ok(mut transaction) = postgres_pool.get().unwrap().begin().await {
             let id = sqlx::query(
-                "INSERT INTO users (first_name, last_name, is_admin) VALUES ($1, $2, $3) RETURNING id;",
-            )
-            .bind(first_name.into())
-            .bind(last_name.into())
-            .bind(b)
-            .fetch_one(&mut *transaction)
-            .await
-            .unwrap();
+            "INSERT INTO users (first_name, last_name, user_name, email) VALUES ($1, $2, $3, $4) RETURNING id;",
+        )
+        .bind(new_user.first_name)
+        .bind(new_user.last_name)
+        .bind(new_user.user_name.clone())
+        .bind(new_user.email)
+        .fetch_one(&mut *transaction)
+        .await
+        .unwrap();
 
             let id: i32 = id.get("id");
 
-            sqlx::query("INSERT INTO auth_user (hash, user_id) VALUES ($1, $2);")
+            sqlx::query("INSERT INTO user_auth (hash, user_id) VALUES ($1, $2);")
                 .bind(hash)
                 .bind(id)
                 .execute(&mut *transaction)
@@ -50,59 +49,77 @@ async fn register_user(
                 .unwrap();
 
             transaction.commit().await.unwrap();
-        }
-    }
-}
-
-async fn login_user(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Option<[u8; 16]> {
-    let hash = create_hash(user_name, pass);
-
-    if let Ok(postgres_pool) = POSTGRES.lock() {
-        if let Ok(mut transaction) = postgres_pool.get().unwrap().begin().await {
-            let Some(out) = sqlx::query("SELECT * FROM auth_user WHERE hash = $1;")
-                .bind(hash)
-                .fetch_optional(&mut *transaction)
-                .await
-                .unwrap()
-            else {
-                panic!("User not found");
-            };
-
-            let id: i32 = out.get("user_id");
-
-            let mut session_id = [0u8; 16];
-            rand::fill(&mut session_id);
-
-            let session_hash = Sha512::digest(session_id).to_vec();
-
-            let current_time = chrono::Utc::now();
-            let one_hour = chrono::TimeDelta::hours(1);
-
-            sqlx::query("INSERT INTO sessions (session_hash, user_id, expiration) VALUES ($1, $2, $3);")
-                .bind(session_hash)
-                .bind(id)
-                .bind(current_time + one_hour)
-                .execute(&mut *transaction)
-                .await
-                .unwrap();
-
-            transaction.commit().await.unwrap();
-
-            return Some(session_id);
+        } else {
+            return Err("Could not create user".into());
         }
     }
 
-    None
+    let login_obj = LoginObject {
+        user_name: new_user.user_name,
+        pass: new_user.pass,
+    };
+
+    tracing::info!("User Created");
+    Ok(login_user(login_obj).await?)
 }
 
-// #[tokio::test]
-// async fn register_test() {
-//     database::init_database().await.unwrap();
-//     register_user("aeskul", "Hopi0104", "John", "Birdwell", Some(false)).await;
-// }
+pub async fn login_user(user: LoginObject) -> Result<[u8; 16], String> {
+    let hash = create_hash(user.user_name, user.pass);
+    let postgres_pool = POSTGRES.lock().await;
 
-#[tokio::test]
-async fn login_test() {
-    database::init_database().await.unwrap();
-    login_user("aeskul", "Hopi0104").await;
+    let mut session_id = [0u8; 16];
+
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let Ok(mut transaction) = transaction_future.await else {
+            panic!();
+        };
+
+        let Ok(Some(out)) = sqlx::query("SELECT * FROM user_auth WHERE hash = $1;")
+            .bind(hash)
+            .fetch_optional(&mut *transaction)
+            .await
+        else {
+            return Err("User not found".into());
+        };
+
+        let id: i32 = out.get("user_id");
+
+        rand::fill(&mut session_id);
+
+        let session_hash = Sha512::digest(session_id).to_vec();
+
+        let current_time = chrono::Utc::now();
+        let one_hour = chrono::TimeDelta::hours(1);
+
+        // Clear previous sessions
+        if let Err(e) = sqlx::query("DELETE FROM user_session WHERE user_id = $1;")
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+        {
+            return Err(format!("Could not clear prior sessions: {e}"));
+        }
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO user_session (session_hash, user_id, expiration) VALUES ($1, $2, $3);",
+        )
+        .bind(session_hash)
+        .bind(id)
+        .bind(current_time + one_hour)
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("Could not create session: {e}"));
+        }
+
+        if let Err(e) = transaction.commit().await {
+            return Err(format!("Failed to commit transaction: {e}"));
+        }
+
+        tracing::info!("Logged in {}", id);
+    } else {
+        return Err("Could not begin transaction".into());
+    }
+
+    Ok(session_id)
 }

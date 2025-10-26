@@ -6,8 +6,7 @@ use std::{
 use tracing::{error, info, warn};
 
 use crate::{
-    assignment::Assignment, image::ImageBuilder, response_object::ResponseObject,
-    submission_object::SubmissionObject,
+    assignment::Assignment, database::auth, image::ImageBuilder, model::{response_object::ResponseObject, submission_object::SubmissionObject}
 };
 
 // Supported Languages
@@ -21,6 +20,10 @@ use crate::{
 // }
 
 pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String> {
+    if !auth::validate::validate_student(sub_ob.clone().into()).await {
+        return Err("Unauthorized".into());
+    }
+
     let Some(container) = get_container_for_language(&sub_ob.lang) else {
         error!("No container found for language: {}", sub_ob.lang);
         return Err("Language not supported.".into());
