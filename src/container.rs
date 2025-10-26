@@ -5,7 +5,10 @@ use std::{
 
 use tracing::{error, info, warn};
 
-use crate::{assignment::Assignment, image::ImageBuilder, response_object::ResponseObject, submission_object::SubmissionObject};
+use crate::{
+    assignment::Assignment, image::ImageBuilder, response_object::ResponseObject,
+    submission_object::SubmissionObject,
+};
 
 // Supported Languages
 // pub enum Language {
@@ -17,7 +20,7 @@ use crate::{assignment::Assignment, image::ImageBuilder, response_object::Respon
 //     Cpp,
 // }
 
-pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String> {
+pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String> {
     let Some(container) = get_container_for_language(&sub_ob.lang) else {
         error!("No container found for language: {}", sub_ob.lang);
         return Err("Language not supported.".into());
@@ -96,14 +99,18 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
         };
 
         // let Ok(container_output) = image.exec(input).unwrap();
-        let container_output = match image.exec(input.clone()) {
-            Ok(s) => s,
+        let container_output = match image.exec(input.clone(), assignment.get_timeout()).await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                test_results.time_out(test_name);
+                continue;
+            }
             Err(e) => {
                 test_results.err(test_name, e);
                 continue;
             }
         };
-        
+
         if container_output.trim() == output.trim() {
             info!("Assignment {}, {} :: OK", sub_ob.assignment_id, test_name);
             test_results.pass(test_name);
@@ -116,7 +123,12 @@ pub fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String>
                 container_output.trim()
             );
             if test.public {
-                test_results.pub_fail(test_name, input.trim(), output.trim(), container_output.trim());
+                test_results.pub_fail(
+                    test_name,
+                    input.trim(),
+                    output.trim(),
+                    container_output.trim(),
+                );
             } else {
                 test_results.fail(test_name);
             }

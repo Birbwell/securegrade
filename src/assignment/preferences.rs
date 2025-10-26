@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Preferences {
-    assignment_name: Option<String>,
-    description: Option<String>
+    pub(super) assignment_name: Option<String>,
+    pub(super) description: Option<String>,
+    pub(super) timeout: Option<u64>,
 }

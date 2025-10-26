@@ -9,6 +9,7 @@ enum TestStatus {
         expected: String,
         found: String,
     },
+    TimeOut,
     Err(String),
 }
 
@@ -24,6 +25,10 @@ impl ResponseObject {
 
     pub fn fail(&mut self, test_name: impl Into<String>) {
         self.tests.push((test_name.into(), TestStatus::Fail));
+    }
+
+    pub fn time_out(&mut self, test_name: impl Into<String>) {
+        self.tests.push((test_name.into(), TestStatus::TimeOut));
     }
 
     pub fn pub_fail(

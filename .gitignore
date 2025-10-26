@@ -1,1 +1,6 @@
 target
+sonarqube
+*.key
+*.cer
+database_usr.txt
+run_autograder.sh

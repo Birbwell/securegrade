@@ -3,7 +3,8 @@ use std::{
     process::{Command, Stdio},
 };
 
-use tracing::{error, info, warn};
+use tokio::time::{Duration, timeout};
+use tracing::{debug, error, info, warn};
 
 pub struct ImageBuilder {
     tag: Option<String>,
@@ -51,7 +52,11 @@ impl ImageBuilder {
 
 impl Image {
     /// Runs the docker container with the provided input
-    pub fn exec(&self, stdin: String) -> Result<String, String> {
+    pub async fn exec(
+        &self,
+        stdin: String,
+        duration: Option<Duration>,
+    ) -> Result<Option<String>, String> {
         let mut child = Command::new("podman")
             .args(["run", "-i", &self.image_id])
             .stdin(Stdio::piped())
@@ -63,7 +68,25 @@ impl Image {
         let child_stdin = child.stdin.as_mut().unwrap();
         child_stdin.write_all(stdin.as_bytes()).unwrap();
 
-        let process_output = child.wait_with_output().unwrap();
+        let process_output = if let Some(_duration) = duration {
+            let timer = tokio::spawn(async move {
+                tokio::time::sleep(_duration).await;
+            });
+
+            let get_child_output = tokio::spawn(async { child.wait_with_output().unwrap() });
+
+            tokio::select! {
+                _ = timer => {
+                    warn!("Container {} Timed Out", self.image_id);
+                    return Ok(None);
+                },
+                output = get_child_output => {
+                    output.unwrap()
+                }
+            }
+        } else {
+            child.wait_with_output().unwrap()
+        };
 
         if process_output.stderr.len() > 0 {
             let err_str = String::from_utf8(process_output.stderr)
@@ -77,7 +100,7 @@ impl Image {
 
         let output = String::from_utf8(process_output.stdout).unwrap();
 
-        Ok(output)
+        Ok(Some(output))
     }
 }
 

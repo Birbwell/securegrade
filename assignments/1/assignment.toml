@@ -1,25 +1,12 @@
 [preferences]
-name = "Assignment 1"
-description = "Reverse the input."
+assignment_name = "Assignment 1"
+description = "Add two numbers."
 
-[tests.SimpleFirst]
-input_file = "test1.in"
-output = "oofamoodaks"
+[tests.First]
+input = "1 2"
+output = "3"
 
-[tests.SimpleSecond]
-input = "smay"
-output_file = "test2.out"
-
-[tests.WrongPublic]
-input = "smay"
-output = "Intentionally Wrong"
-public = true
-
-[tests.WrongPrivate]
-input = "wubba wubba"
-output = "Intentionally Wrong"
-
-[tests.RightPrivate]
-input = "sun and moon"
-output = "noom dna nus"
+[tests.Second]
+input = "24 48"
+output = "72"
 public = true
