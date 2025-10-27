@@ -1,7 +1,12 @@
-use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use sha2::{Digest, Sha512};
+use sqlx::{Row, Pool, Postgres, postgres::PgPoolOptions};
 use std::env::var;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
+
+use crate::database;
 
 pub mod auth;
 pub mod operations;
@@ -131,4 +136,23 @@ pub async fn init_database() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[tokio::test]
+async fn something_test() {
+    database::init_database().await.unwrap();
+    let session_base = "TgOj2WRYDTQbcPhhNMJcsw==";
+    let session_id = BASE64_STANDARD.decode(session_base).unwrap();
+    let session_hash = Sha512::digest(session_id).to_vec();
+
+    let posgres_pool = POSTGRES.lock().await;
+    if let Ok(mut transaction) = posgres_pool.clone().unwrap().begin().await {
+        let res = sqlx::query("SELECT * FROM user_session;")
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+
+        let v: Vec<u8> = res.get("session_hash");
+        assert_eq!(v, session_hash);
+    }
 }

@@ -1,5 +1,4 @@
 pub mod add_to_class_object;
-pub mod error_object;
 pub mod login_object;
 pub mod new_class_object;
 pub mod new_user_object;

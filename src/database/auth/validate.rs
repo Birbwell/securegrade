@@ -3,8 +3,32 @@ use sqlx::Row;
 
 use crate::{database::POSTGRES, model::validation_object::ValidationObject};
 
-pub async fn validate_student(validation: ValidationObject) -> bool {
-    let Some(class) = validation.class else {
+pub async fn validate_token(validation: &ValidationObject) -> bool {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let Ok(Some(res)) = sqlx::query("SELECT * FROM user_session WHERE session_hash = $1;")
+            .bind(&validation.session_hash)
+            .fetch_optional(&mut *transaction)
+            .await
+        else {
+            return false;
+        };
+
+        let expiration: chrono::DateTime<Utc> = res.get("expiration");
+        if expiration > chrono::Utc::now() {
+            return true;
+        }
+
+        transaction.commit().await.unwrap();
+    }
+
+    false
+}
+
+pub async fn validate_student(validation: &ValidationObject) -> bool {
+    let Some(class) = validation.class.clone() else {
         return false;
     };
 
@@ -13,7 +37,7 @@ pub async fn validate_student(validation: ValidationObject) -> bool {
         let mut transaction = transaction_future.await.unwrap();
 
         let Ok(Some(res)) = sqlx::query("SELECT * FROM user_session WHERE session_hash = $1;")
-            .bind(validation.session_hash)
+            .bind(&validation.session_hash)
             .fetch_optional(&mut *transaction)
             .await
         else {
@@ -41,8 +65,8 @@ pub async fn validate_student(validation: ValidationObject) -> bool {
     false
 }
 
-pub async fn validate_instructor(validation: ValidationObject) -> bool {
-    let Some(class) = validation.class else {
+pub async fn validate_instructor(validation: &ValidationObject) -> bool {
+    let Some(class) = validation.class.clone() else {
         return false;
     };
 
@@ -51,7 +75,7 @@ pub async fn validate_instructor(validation: ValidationObject) -> bool {
         let mut transaction = transaction_future.await.unwrap();
 
         let Ok(Some(res)) = sqlx::query("SELECT * FROM user_session WHERE session_hash = $1;")
-            .bind(validation.session_hash)
+            .bind(&validation.session_hash)
             .fetch_optional(&mut *transaction)
             .await
         else {
@@ -79,13 +103,13 @@ pub async fn validate_instructor(validation: ValidationObject) -> bool {
     false
 }
 
-pub async fn validate_admin(validation: ValidationObject) -> bool {
+pub async fn validate_admin(validation: &ValidationObject) -> bool {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
         let Ok(Some(res)) = sqlx::query("SELECT * FROM user_session WHERE session_hash = $1;")
-            .bind(validation.session_hash)
+            .bind(&validation.session_hash)
             .fetch_optional(&mut *transaction)
             .await
         else {

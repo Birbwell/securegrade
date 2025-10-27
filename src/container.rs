@@ -23,7 +23,7 @@ use crate::{
 // }
 
 pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String> {
-    if !auth::validate::validate_student(sub_ob.clone().into()).await {
+    if !auth::validate::validate_student(&sub_ob.clone().into()).await {
         return Err("Unauthorized".into());
     }
 

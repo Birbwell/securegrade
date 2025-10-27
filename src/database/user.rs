@@ -1,3 +1,4 @@
+use base64::{Engine, prelude::BASE64_STANDARD};
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
@@ -90,6 +91,7 @@ pub async fn login_user(user: LoginObject) -> Result<[u8; 16], String> {
 
         rand::fill(&mut session_id);
 
+        tracing::info!("{}", BASE64_STANDARD.encode(&session_id));
         let session_hash = Sha512::digest(session_id).to_vec();
 
         let current_time = chrono::Utc::now();
