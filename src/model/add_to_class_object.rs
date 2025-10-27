@@ -14,6 +14,9 @@ impl Into<ValidationObject> for AddToClassObject {
     fn into(self) -> ValidationObject {
         let session_id = BASE64_STANDARD.decode(&self.session_hash).unwrap();
         let session_hash = Sha512::digest(session_id).to_vec();
-        ValidationObject { class: Some(self.class_name), session_hash }
+        ValidationObject {
+            class: Some(self.class_name),
+            session_hash,
+        }
     }
 }

@@ -6,7 +6,10 @@ use std::{
 use tracing::{error, info, warn};
 
 use crate::{
-    assignment::Assignment, database::auth, image::ImageBuilder, model::{response_object::ResponseObject, submission_object::SubmissionObject}
+    assignment::Assignment,
+    database::auth,
+    image::ImageBuilder,
+    model::{response_object::ResponseObject, submission_object::SubmissionObject},
 };
 
 // Supported Languages

@@ -1,7 +1,9 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha512};
 
-use crate::model::{submission_object::file_object::FileObject, validation_object::ValidationObject};
+use crate::model::{
+    submission_object::file_object::FileObject, validation_object::ValidationObject,
+};
 use base64::prelude::*;
 
 mod file_object;
@@ -20,6 +22,9 @@ impl Into<ValidationObject> for SubmissionObject {
     fn into(self) -> ValidationObject {
         let session_id = BASE64_STANDARD.decode(&self.session_hash).unwrap().to_vec();
         let session_hash = Sha512::digest(session_id).to_vec();
-        ValidationObject { class: Some(self.class_name), session_hash }
+        ValidationObject {
+            class: Some(self.class_name),
+            session_hash,
+        }
     }
 }

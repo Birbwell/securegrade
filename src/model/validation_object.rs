@@ -5,4 +5,3 @@ pub struct ValidationObject {
     pub class: Option<String>,
     pub session_hash: Vec<u8>,
 }
-

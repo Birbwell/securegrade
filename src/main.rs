@@ -1,21 +1,24 @@
-use std::net::SocketAddr;
 use std::sync::Mutex;
 
+use axum::http::{HeaderName, HeaderValue, Method};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use axum_server::tls_rustls::RustlsConfig;
 use serde_json::Value;
-use tracing::{info, Level};
+use tokio::net::TcpListener;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::assignment::Assignment;
 use crate::container::run_container;
 use crate::database::auth::session::Session;
 use crate::model::add_to_class_object::AddToClassObject;
+use crate::model::error_object::ErrorObject;
 use crate::model::login_object::LoginObject;
 use crate::model::new_class_object::NewClassObject;
 use crate::model::new_user_object::NewUserObject;
 use crate::model::response_object::ResponseObject;
+use crate::model::simple_response::SimpleResponse;
 use crate::model::submission_object::SubmissionObject;
 
 mod assignment;
@@ -36,21 +39,27 @@ async fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    let app: Router = Router::new()
-        .route("/submit", get(receive_submission))
-        .route("/add_assignment", post(add_assignment))
-        .route("/update_assignment", put(update_assignment))
-        .route("/get_assignments", get(get_assignments))
-        .route("/login", get(login))
-        .route("/signup", post(signup))
-        .route("/instructor/add_instructor", post(add_instructor))
-        .route("/instructor/add_student", post(add_student))
-        .route("/admin/create_class", post(create_class));
+    let cors = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::PUT])
+        .allow_headers(["Content-Type".parse::<HeaderName>().unwrap()])
+        .allow_origin(AllowOrigin::any());
 
-    let config =
-        RustlsConfig::from_pem_file("aeskul.net_certificate.cer", "aeskul.net_private_key.key")
-            .await
-            .unwrap();
+    let app: Router = Router::new()
+        .route("/api/submit", post(receive_submission))
+        .route("/api/add_assignment", post(add_assignment))
+        .route("/api/update_assignment", put(update_assignment))
+        .route("/api/get_assignments", get(get_assignments))
+        .route("/api/login", post(login))
+        .route("/api/signup", post(signup))
+        .route("/api/instructor/add_instructor", post(add_instructor))
+        .route("/api/instructor/add_student", post(add_student))
+        .route("/api/admin/create_class", post(create_class))
+        .layer(cors);
+
+    // let config =
+    //     RustlsConfig::from_pem_file("aeskul.net_certificate.cer", "aeskul.net_private_key.key")
+    //         .await
+    //         .unwrap();
 
     if let Err(e) = database::init_database().await {
         tracing::error!("{}", e);
@@ -59,8 +68,12 @@ async fn main() {
 
     info!("Database initialized");
 
-    let server = axum_server::bind_rustls("0.0.0.0:443".parse::<SocketAddr>().unwrap(), config);
-    server.serve(app.into_make_service()).await.unwrap()
+    // let server = axum_server::bind_rustls("0.0.0.0:443".parse::<SocketAddr>().unwrap(), config);
+    // let server = axum_server::bind_rustls("localhost:9090".parse::<SocketAddr>().unwrap(), config);
+    // server.serve(app.into_make_service()).await.unwrap()
+
+    let listener = TcpListener::bind("localhost:9090").await;
+    axum::serve(listener.unwrap(), app.into_make_service()).await.unwrap();
 }
 
 async fn receive_submission(json_submission: String) -> Result<Json<ResponseObject>, String> {
@@ -141,23 +154,29 @@ async fn add_student(instructor_data: String) -> Result<String, String> {
     Ok("true".into())
 }
 
-async fn add_instructor(instructor_data: String) -> Result<String, String> {
+async fn add_instructor(instructor_data: String) -> Json<SimpleResponse> {
     let instructor_obj = serde_json::from_str::<AddToClassObject>(&instructor_data).unwrap();
     if let Err(e) = database::operations::add_instructor(instructor_obj).await {
-        return Err(format!("Could not add instructor: {e}"));
+        return Json(SimpleResponse::Err(format!("Could not add instructor: {e}")));
     }
-    Ok("true".into())
+    Json(SimpleResponse::Body("OK".into()))
 }
 
-async fn login(login_data: String) -> Result<Json<Session>, String> {
+async fn login(login_data: String) -> Result<Json<Session>, Json<SimpleResponse>> {
     let login_obj = serde_json::from_str::<LoginObject>(&login_data).unwrap();
-    let session_token = database::user::login_user(login_obj).await.unwrap();
-    Ok(Json(Session::new(session_token)))
+    match database::user::login_user(login_obj).await {
+        Ok(s) => Ok(Json(Session::new(s))),
+        Err(e) => Err(Json(SimpleResponse::Err(e)))
+    }
 }
 
-async fn signup(signup_data: String) -> Result<Json<Session>, String> {
-    info!("Signup Request Received");
-    let signin_obj = serde_json::from_str::<NewUserObject>(&signup_data).unwrap();
-    let session_token = database::user::register_user(signin_obj).await.unwrap();
-    Ok(Json(Session::new(session_token)))
+async fn signup(signup_data: String) -> Result<Json<Session>, Json<SimpleResponse>> {
+    let Ok(signup_obj) = serde_json::from_str::<NewUserObject>(&signup_data) else {
+        return Err(Json(SimpleResponse::Err("Improperly formatted data".into())));
+    };
+
+    match database::user::register_user(signup_obj).await {
+        Ok(s) => Ok(Json(Session::new(s))),
+        Err(e) => Err(Json(SimpleResponse::Err(e)))
+    }
 }

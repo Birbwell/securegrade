@@ -24,31 +24,35 @@ pub async fn register_user(new_user: NewUserObject) -> Result<[u8; 16], String> 
         let postgres_pool = POSTGRES.lock().await;
         if let Some(transaction) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
             let Ok(mut transaction) = transaction.await else {
-                // return Err("Unable to lock transaction".into())
-                panic!();
+                return Err("Unable to lock database transaction".into());
             };
 
-            let id = sqlx::query(
+            let id: i32 = match sqlx::query(
             "INSERT INTO users (first_name, last_name, user_name, email) VALUES ($1, $2, $3, $4) RETURNING id;",
-        )
-        .bind(new_user.first_name)
-        .bind(new_user.last_name)
-        .bind(new_user.user_name.clone())
-        .bind(new_user.email)
-        .fetch_one(&mut *transaction)
-        .await
-        .unwrap();
+            )
+            .bind(new_user.first_name)
+            .bind(new_user.last_name)
+            .bind(new_user.user_name.clone())
+            .bind(new_user.email)
+            .fetch_one(&mut *transaction)
+            .await {
+                Ok(id) => id.get("id"),
+                Err(e) => return Err(format!("Could not insert into database: {e}")),
+            };
 
-            let id: i32 = id.get("id");
-
-            sqlx::query("INSERT INTO user_auth (hash, user_id) VALUES ($1, $2);")
+            if sqlx::query("INSERT INTO user_auth (hash, user_id) VALUES ($1, $2);")
                 .bind(hash)
                 .bind(id)
                 .execute(&mut *transaction)
                 .await
-                .unwrap();
+                .is_err()
+            {
+                return Err("Could not add to authentication table".into());
+            }
 
-            transaction.commit().await.unwrap();
+            if let Err(e) = transaction.commit().await {
+                return Err(format!("Could not commit database transaction: {e}"));
+            }
         } else {
             return Err("Could not create user".into());
         }
@@ -79,7 +83,7 @@ pub async fn login_user(user: LoginObject) -> Result<[u8; 16], String> {
             .fetch_optional(&mut *transaction)
             .await
         else {
-            return Err("User not found".into());
+            return Err("Incorrect password or account does not exist.".into());
         };
 
         let id: i32 = out.get("user_id");
@@ -109,14 +113,14 @@ pub async fn login_user(user: LoginObject) -> Result<[u8; 16], String> {
         .execute(&mut *transaction)
         .await
         {
-            return Err(format!("Could not create session: {e}"));
+            return Err(format!("Could not create login session: {e}"));
         }
 
         if let Err(e) = transaction.commit().await {
-            return Err(format!("Failed to commit transaction: {e}"));
+            return Err(format!("Failed to commit database transaction: {e}"));
         }
 
-        tracing::info!("Logged in {}", id);
+        tracing::info!("Logged in user {}", id);
     } else {
         return Err("Could not begin transaction".into());
     }
