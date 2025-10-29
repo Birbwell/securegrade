@@ -1,8 +1,7 @@
-pub mod add_to_class_object;
-pub mod login_object;
-pub mod new_class_object;
-pub mod new_user_object;
-pub mod response_object;
 pub mod simple_response;
+pub mod submission_response;
+pub mod file_object;
+pub mod class_item;
+pub mod assignment_item;
 pub mod submission_object;
-pub mod validation_object;
+pub mod request;

@@ -24,6 +24,7 @@ impl ImageBuilder {
 
     /// Build the docker container object
     pub fn build(self) -> Result<Image, String> {
+        warn!("{}", self.directory);
         let container = Command::new("podman")
             .args(["buildx", "build", "-q", &self.directory])
             .output()
@@ -50,9 +51,13 @@ impl ImageBuilder {
 
 impl Image {
     /// Runs the docker container with the provided input
+    /// 
+    /// Ok(Some(output)) => Produced output
+    /// Ok(None) => Timed Out
+    /// Err(e) => Error (with message)
     pub async fn exec(
         &self,
-        stdin: String,
+        stdin: impl AsRef<[u8]>,
         duration: Option<Duration>,
     ) -> Result<Option<String>, String> {
         let mut child = Command::new("podman")
@@ -64,7 +69,7 @@ impl Image {
             .unwrap();
 
         let child_stdin = child.stdin.as_mut().unwrap();
-        child_stdin.write_all(stdin.as_bytes()).unwrap();
+        child_stdin.write_all(stdin.as_ref()).unwrap();
 
         let process_output = if let Some(_duration) = duration {
             let timer = tokio::spawn(async move {

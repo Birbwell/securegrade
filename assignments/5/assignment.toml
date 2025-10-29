@@ -1,0 +1,11 @@
+[preferences]
+assignment_name = "Assignment 0"
+description = "Reverse the input"
+
+[tests.First]
+input = "smay"
+output = "yams"
+
+[tests.Second]
+input = "dua lipa"
+output = "apil aud"

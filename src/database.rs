@@ -1,12 +1,7 @@
-use base64::Engine;
-use base64::prelude::BASE64_STANDARD;
-use sha2::{Digest, Sha512};
-use sqlx::{Row, Pool, Postgres, postgres::PgPoolOptions};
+use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::env::var;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
-
-use crate::database;
 
 pub mod auth;
 pub mod operations;
@@ -73,7 +68,8 @@ pub async fn init_database() -> Result<(), String> {
         // Create a table for the classes
         if let Err(e) = sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS classes (
-            class_number CITEXT PRIMARY KEY
+            class_number CITEXT PRIMARY KEY,
+            class_description TEXT
         );"#,
         )
         .execute(&mut *transaction)
@@ -124,6 +120,34 @@ pub async fn init_database() -> Result<(), String> {
             return Err(format!("Could not create session table: {e}"));
         }
 
+        // Create assignments
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS assignments (
+                id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                assignment_name TEXT NOT NULL,
+                assignment_description TEXT,
+                deadline TIMESTAMPTZ NOT NULL
+            );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("Could not create assignment table: {e}"));
+        }
+
+        // And assignment-class associations
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS assignment_class (
+            assignment_id INTEGER REFERENCES assignments (id),
+            class_number CITEXT REFERENCES classes (class_number)
+        );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("Could not create assignment-class table: {e}"));
+        }
+
         if let Err(e) = transaction.commit().await {
             return Err(format!("Could not commit table-creation transaction: {e}"));
         };
@@ -136,23 +160,4 @@ pub async fn init_database() -> Result<(), String> {
     }
 
     Ok(())
-}
-
-#[tokio::test]
-async fn something_test() {
-    database::init_database().await.unwrap();
-    let session_base = "TgOj2WRYDTQbcPhhNMJcsw==";
-    let session_id = BASE64_STANDARD.decode(session_base).unwrap();
-    let session_hash = Sha512::digest(session_id).to_vec();
-
-    let posgres_pool = POSTGRES.lock().await;
-    if let Ok(mut transaction) = posgres_pool.clone().unwrap().begin().await {
-        let res = sqlx::query("SELECT * FROM user_session;")
-            .fetch_one(&mut *transaction)
-            .await
-            .unwrap();
-
-        let v: Vec<u8> = res.get("session_hash");
-        assert_eq!(v, session_hash);
-    }
 }

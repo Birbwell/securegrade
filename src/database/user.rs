@@ -2,7 +2,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
-use crate::model::{login_object::LoginObject, new_user_object::NewUserObject};
+use crate::model::request::Request;
 
 use super::POSTGRES;
 
@@ -18,8 +18,32 @@ fn create_hash(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Vec<u
     Sha512::digest(secret_sauce).to_vec()
 }
 
-pub async fn register_user(new_user: NewUserObject) -> Result<[u8; 16], String> {
-    let hash = create_hash(new_user.user_name.clone(), new_user.pass.clone());
+pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32> {
+    let session_id = BASE64_STANDARD.decode(session_base).unwrap();
+    let session_hash = Sha512::digest(session_id).to_vec();
+
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let row = sqlx::query("SELECT user_id FROM user_session WHERE session_hash = $1;")
+            .bind(session_hash)
+            .fetch_one(&mut *transaction)
+            .await
+            .unwrap();
+
+        let id: i32 = row.get("user_id");
+        return Some(id);
+    }
+    None
+}
+
+pub async fn register_user(new_user: Request) -> Result<[u8; 16], String> {
+    let Some((user_name, pass)) = new_user.get_login() else {
+        return Err(format!("Missing fields user_name or pass in request"));
+    };
+
+    let hash = create_hash(user_name, pass);
 
     {
         let postgres_pool = POSTGRES.lock().await;
@@ -31,10 +55,10 @@ pub async fn register_user(new_user: NewUserObject) -> Result<[u8; 16], String> 
             let id: i32 = match sqlx::query(
             "INSERT INTO users (first_name, last_name, user_name, email) VALUES ($1, $2, $3, $4) RETURNING id;",
             )
-            .bind(new_user.first_name)
-            .bind(new_user.last_name)
+            .bind(new_user.first_name.clone())
+            .bind(new_user.last_name.clone())
             .bind(new_user.user_name.clone())
-            .bind(new_user.email)
+            .bind(new_user.email.clone())
             .fetch_one(&mut *transaction)
             .await {
                 Ok(id) => id.get("id"),
@@ -59,21 +83,18 @@ pub async fn register_user(new_user: NewUserObject) -> Result<[u8; 16], String> 
         }
     }
 
-    let login_obj = LoginObject {
-        user_name: new_user.user_name,
-        pass: new_user.pass,
-    };
-
     tracing::info!("User Created");
-    Ok(login_user(login_obj).await?)
+    Ok(login_user(new_user).await?)
 }
 
-pub async fn login_user(user: LoginObject) -> Result<[u8; 16], String> {
-    let hash = create_hash(user.user_name, user.pass);
+pub async fn login_user(user: Request) -> Result<[u8; 16], String> {
+    let Some((user_name, pass)) = user.get_login() else {
+        return Err(format!("Missing fields user_name or pass"));
+    };
+
+    let hash = create_hash(user_name, pass);
     let postgres_pool = POSTGRES.lock().await;
-
     let mut session_id = [0u8; 16];
-
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let Ok(mut transaction) = transaction_future.await else {
             panic!();

@@ -1,6 +1,7 @@
 use std::{
     fs::{copy, create_dir, create_dir_all, read_dir, read_to_string, remove_dir_all, write},
     path::PathBuf,
+    process::Command,
 };
 
 use tracing::{error, info, warn};
@@ -9,7 +10,7 @@ use crate::{
     assignment::Assignment,
     database::auth,
     image::ImageBuilder,
-    model::{response_object::ResponseObject, submission_object::SubmissionObject},
+    model::{request::Request, submission_response::SubmissionResponse},
 };
 
 // Supported Languages
@@ -22,17 +23,18 @@ use crate::{
 //     Cpp,
 // }
 
-pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, String> {
-    if !auth::validate::validate_student(&sub_ob.clone().into()).await {
-        return Err("Unauthorized".into());
-    }
-
-    let Some(container) = get_container_for_language(&sub_ob.lang) else {
-        error!("No container found for language: {}", sub_ob.lang);
+pub async fn run_container(
+    zip_file: axum::body::Bytes,
+    user_id: i32,
+    assignment_id: i32,
+    lang: String,
+) -> Result<SubmissionResponse, String> {
+    let Some(container) = get_container_for_language(&lang) else {
+        error!("No container found for language: {}", lang);
         return Err("Language not supported.".into());
     };
 
-    let workdir = format!("/tmp/{}-{}", sub_ob.banner_id, sub_ob.assignment_id);
+    let workdir = format!("/tmp/{}-{}", user_id, assignment_id);
 
     // Delete and recreate working directory
     let _ = remove_dir_all(&workdir);
@@ -44,30 +46,19 @@ pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, S
     )
     .unwrap();
 
-    for file in sub_ob.files {
-        info!(
-            "Writing {}/{}{}{}",
-            workdir,
-            file.parent_path,
-            if file.parent_path.len() == 0 { "" } else { "/" },
-            file.name
-        );
-
-        create_dir_all(format!("{}/{}", workdir, file.parent_path)).unwrap();
-        write(
-            format!(
-                "{}/{}{}{}",
-                workdir,
-                file.parent_path,
-                if file.parent_path.len() == 0 { "" } else { "/" },
-                file.name
-            ),
-            file.data,
-        )
+    std::fs::write(&format!("{workdir}/submission.zip"), zip_file).unwrap();
+    Command::new("unzip")
+        .args([
+            &format!("{workdir}/submission.zip"),
+            "-d",
+            &format!("{workdir}/submission"),
+        ])
+        .spawn()
+        .unwrap()
+        .wait()
         .unwrap();
-    }
 
-    let assignment_dir = format!("assignments/{}", sub_ob.assignment_id);
+    let assignment_dir = format!("assignments/{}", assignment_id);
     let toml_assignment = read_to_string(format!("{}/assignment.toml", assignment_dir)).unwrap();
     let assignment = toml::from_str::<Assignment>(&toml_assignment).unwrap();
 
@@ -75,14 +66,15 @@ pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, S
     info!("Removing working directory {workdir}");
     remove_dir_all(&workdir).unwrap();
 
-    let mut test_results = ResponseObject::default();
+    // let mut test_results = ResponseObject::default();
+    let mut test_results = SubmissionResponse::default();
 
     for (test_name, test) in &assignment.tests {
         let input = if let Some(input_file) = &test.input_file {
             if test.input.is_some() {
                 warn!(
                     "Assignment {}, {}: Both input and input_file defined. Defaulting to input_file.",
-                    sub_ob.assignment_id, test_name
+                    assignment_id, test_name
                 );
             }
 
@@ -95,7 +87,7 @@ pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, S
             if test.output.is_some() {
                 warn!(
                     "Assignment {}, {}: Both output and output_file defined. Defaulting to output_file.",
-                    sub_ob.assignment_id, test_name
+                    assignment_id, test_name
                 );
             }
 
@@ -104,40 +96,44 @@ pub async fn run_container(sub_ob: SubmissionObject) -> Result<ResponseObject, S
             test.output.clone().unwrap()
         };
 
-        // let Ok(container_output) = image.exec(input).unwrap();
-        let container_output = match image.exec(input.clone(), assignment.get_timeout()).await {
+        let container_output = match image.exec(input, assignment.get_timeout()).await {
             Ok(Some(s)) => s,
             Ok(None) => {
+                // test_results.time_out(test_name);
+                // warn!("Timed Out");
                 test_results.time_out(test_name);
                 continue;
             }
             Err(e) => {
+                // test_results.err(test_name, e);
+                // warn!("Container Error: {e}");
                 test_results.err(test_name, e);
                 continue;
             }
         };
 
         if container_output.trim() == output.trim() {
-            info!("Assignment {}, {} :: OK", sub_ob.assignment_id, test_name);
+            // info!("Assignment {}, {} :: OK", sub_ob.assignment_id, test_name);
             test_results.pass(test_name);
         } else {
-            info!(
-                "Assignment {}, {} :: Expected {:?}, found {:?}",
-                sub_ob.assignment_id,
-                test_name,
-                output.trim(),
-                container_output.trim()
-            );
-            if test.public {
-                test_results.pub_fail(
-                    test_name,
-                    input.trim(),
-                    output.trim(),
-                    container_output.trim(),
-                );
-            } else {
-                test_results.fail(test_name);
-            }
+            // info!(
+            //     "Assignment {}, {} :: Expected {:?}, found {:?}",
+            //     sub_ob.assignment_id,
+            //     test_name,
+            //     output.trim(),
+            //     container_output.trim()
+            // );
+            // if test.public {
+            //     test_results.pub_fail(
+            //         test_name,
+            //         input.trim(),
+            //         output.trim(),
+            //         container_output.trim(),
+            //     );
+            // } else {
+            //     test_results.fail(test_name);
+            // }
+            test_results.fail(test_name);
         }
     }
 
