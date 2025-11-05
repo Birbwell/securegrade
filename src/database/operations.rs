@@ -1,8 +1,13 @@
 use crate::database::POSTGRES;
+use crate::database::user::get_user_from_session;
 use crate::model::assignment_item::AssignmentItem;
 use crate::model::class_item::ClassItem;
 use crate::model::request::Request;
+use crate::model::submission_response::SubmissionResponse;
 
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::Response;
 use chrono::Utc;
 use sqlx::Row;
 
@@ -163,7 +168,7 @@ pub async fn get_assignment(
         let assignment = {
             let assignment_id: i32 = row.get("id");
             let assignment_name: String = row.get("assignment_name");
-            let assignment_description: String = row.get("assignment_description");
+            let assignment_description: Option<String> = row.get("assignment_description");
             let deadline: chrono::DateTime<Utc> = row.get("deadline");
             AssignmentItem {
                 assignment_id,
@@ -191,7 +196,7 @@ pub async fn get_assignments(class_number: String) -> Result<Vec<AssignmentItem>
             JOIN assignment_class c ON c.class_number = $1
             ORDER BY a.id ASC;",
         )
-        .bind(class_number.to_lowercase())
+        .bind(class_number)
         .fetch_all(&mut *transaction)
         .await
         {
@@ -204,7 +209,7 @@ pub async fn get_assignments(class_number: String) -> Result<Vec<AssignmentItem>
             .map(|r| {
                 let assignment_id: i32 = r.get("id");
                 let assignment_name: String = r.get("assignment_name");
-                let assignment_description: String = r.get("assignment_description");
+                let assignment_description: Option<String> = r.get("assignment_description");
                 let deadline: chrono::DateTime<Utc> = r.get("deadline");
                 AssignmentItem {
                     assignment_id,
@@ -248,7 +253,7 @@ pub async fn add_assignment(
             "INSERT INTO assignment_class (assignment_id, class_number) VALUES ($1, $2);",
         )
         .bind(assignment_id)
-        .bind(class_number.to_lowercase())
+        .bind(class_number)
         .execute(&mut *transaction)
         .await
         {
@@ -256,7 +261,111 @@ pub async fn add_assignment(
         }
 
         transaction.commit().await.unwrap();
+        return Ok(());
     }
 
     Err("Internal Error".into())
+}
+
+pub async fn container_add_grade(
+    user_id: i32,
+    assignment_id: i32,
+    results: &[u8],
+    grade: f32,
+) -> Result<(), String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO user_assignment_grade (user_id, assignment_id, json_results, grade) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, assignment_id) DO UPDATE SET json_results = $3, grade = $4;"
+        ).bind(user_id)
+        .bind(assignment_id)
+        .bind(results)
+        .bind(grade)
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("{e}"));
+        }
+
+        tracing::info!("Storing submission from {user_id} for {assignment_id}");
+        transaction.commit().await.unwrap();
+    }
+    Ok(())
+}
+
+pub async fn container_retrieve_grade(user_id: i32, assignment_id: i32) -> Response {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let res = match sqlx::query("SELECT json_results, error FROM user_assignment_grade WHERE user_id = $1 AND assignment_id = $2;")
+            .bind(user_id)
+            .bind(assignment_id)
+            .fetch_optional(&mut *transaction)
+            .await {
+                Ok(Some(r)) => r,
+                Ok(None) => {
+                    return Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body("Resource not found.".into())
+                        .unwrap();
+                }
+                Err(e) => {
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(format!("{e}").into())
+                        .unwrap();
+                }
+            };
+
+        let json_results: Option<Vec<u8>> = res.get("json_results");
+        let err_msg: Option<String> = res.get("error");
+
+        if let Some(e) = err_msg {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(format!("{e}").into())
+                .unwrap();
+        }
+
+        if let Some(j) = json_results {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .body(j.into())
+                .unwrap();
+        }
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body("Resource not found.".into())
+        .unwrap()
+}
+
+pub async fn submission_in_progress(user_id: i32, assignment_id: i32) -> bool {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let res = match sqlx::query("SELECT * FROM user_assignment_grade WHERE user_id = $1 AND assignment_id = $2;")
+            .bind(1)
+            .bind(2)
+            .fetch_optional(&mut *transaction)
+            .await {
+                Ok(Some(r)) => r,
+                _ => return false,
+            };
+
+        let _user_id: i32 = res.get("user_id");
+        let _assignment_id: i32 = res.get("assignment_id");
+
+        if user_id == _user_id && assignment_id == _assignment_id {
+            return true;
+        } else {
+            return false;
+        }
+    }
+    false
 }

@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::usize;
 
 use axum::body::{self, Body};
@@ -15,22 +15,24 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::assignment::Assignment;
+use crate::container::ContainerEntry;
 // use crate::container::run_container;
 use crate::database::auth::{
     Session, session_exists_and_valid, session_is_admin, session_is_instructor, session_is_student,
 };
+use crate::database::operations::{submission_in_progress, container_retrieve_grade};
 use crate::model::assignment_item::AssignmentItem;
 use crate::model::class_item::ClassItem;
 use crate::model::request::Request;
 use crate::model::simple_response::SimpleResponse;
-use crate::model::submission_object::SubmissionObject;
 
 mod assignment;
 mod container;
 mod database;
 mod image;
 mod model;
+
+static TX: OnceLock<tokio::sync::mpsc::Sender<ContainerEntry>> = OnceLock::new();
 
 #[tokio::main]
 async fn main() {
@@ -60,10 +62,13 @@ async fn main() {
             post(handle_submission),
         )
         .route(
+            "/api/student/{class_number}/{assignment_id}/retrieve_score",
+            get(retrieve_score)
+        )
+        .route(
             "/api/student/{class_number}/{assignment_id}",
             get(get_assignment),
         )
-        // .route("/api/get_assignments", get(get_assignments))
         .route("/api/student/{class_number}", get(get_assignments))
         .layer(from_fn(handle_student_auth)) //^^ Student Layer
         .route("/api/get_classes", get(get_classes))
@@ -84,6 +89,14 @@ async fn main() {
     };
 
     info!("Database initialized");
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<ContainerEntry>(i32::MAX as usize);
+
+    tokio::spawn(async move {
+        container::container_queue(rx).await;
+    });
+
+    let _ = TX.set(tx).unwrap();
 
     let server = axum_server::bind_rustls("0.0.0.0:9090".parse::<SocketAddr>().unwrap(), config);
     server.serve(app.into_make_service()).await.unwrap();
@@ -202,7 +215,6 @@ async fn handle_student_auth(
 
         let req = axum::http::Request::from_parts(parts, Body::new(body));
 
-        tracing::warn!("{is_auth}");
         if is_auth {
             next.run(req).await
         } else {
@@ -342,7 +354,7 @@ async fn handle_submission(
     Path(path_params): Path<Vec<String>>,
     req: axum::http::Request<Body>,
 ) -> Response {
-    let [class_number, assignment_id] = &path_params[..] else {
+    let [_, assignment_id] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Bad Request".into())
@@ -361,24 +373,71 @@ async fn handle_submission(
             .unwrap();
     };
 
-    let token = auth_header
-        .as_bytes()
-        .iter()
-        .map(|u| *u as char)
-        .collect::<String>();
+    let token = auth_header.to_str().unwrap().to_owned();
 
     let user_id = database::user::get_user_from_session(token).await.unwrap();
 
-    let results = container::run_container(zip_file, user_id, assignment_id, "python313".into())
-        .await
-        .unwrap();
+    if submission_in_progress(user_id, assignment_id).await {
+        return Response::builder()
+            .status(StatusCode::PROCESSING)
+            .body("Previous submission still in queue. Check for results later.".into())
+            .unwrap();
+    }
 
-    let json_out = serde_json::to_string(&results).unwrap();
+    let container_entry = ContainerEntry::new(zip_file, user_id, assignment_id, "python313");
+
+    // Add to container queue
+    if let Some(tx) = TX.get() && let Ok(perm) = tx.reserve().await {
+        perm.send(container_entry);
+    } else {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Could not add submission to queue".into())
+            .unwrap();
+    }
+
+    // let results_json = serde_json::to_string(&results).unwrap();
+    // TODO Store results in database
 
     return Response::builder()
         .status(StatusCode::OK)
-        .body(Body::new(json_out))
+        // .body(Body::new(json_out))
+        .body("Submission Received.".into())
         .unwrap();
+}
+
+async fn retrieve_score(Path(path_params): Path<Vec<String>>, req: axum::http::Request<Body>) -> Response {
+    let (parts, _) = req.into_parts();
+    let Some(auth_header) = parts.headers.get(AUTHORIZATION) else {
+        return Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body("Access Denied.".into())
+            .unwrap();
+    };
+    
+    let [_, assignment_id] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid URL".into())
+            .unwrap();
+    };
+
+    let token = auth_header.to_str().unwrap().to_string();
+    let Some(user_id) = database::user::get_user_from_session(token).await else {
+        return Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body("Access Denied.".into())
+            .unwrap();
+    };
+
+    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid URL".into())
+            .unwrap();
+    };
+
+    return container_retrieve_grade(user_id, assignment_id).await;
 }
 
 async fn add_assignment(

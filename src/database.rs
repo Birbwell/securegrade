@@ -44,10 +44,10 @@ pub async fn init_database() -> Result<(), String> {
             .await
             .unwrap();
 
-        sqlx::query("CREATE EXTENSION IF NOT EXISTS citext;")
-            .execute(&mut *transaction)
-            .await
-            .unwrap();
+        // sqlx::query("CREATE EXTENSION IF NOT EXISTS citext;")
+        //     .execute(&mut *transaction)
+        //     .await
+        //     .unwrap();
 
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS users (
@@ -55,7 +55,7 @@ pub async fn init_database() -> Result<(), String> {
             first_name TEXT NOT NULL,
             last_name TEXT NOT NULL,
             user_name TEXT NOT NULL UNIQUE,
-            email CITEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
             is_admin BOOLEAN DEFAULT FALSE
         );",
         )
@@ -68,7 +68,7 @@ pub async fn init_database() -> Result<(), String> {
         // Create a table for the classes
         if let Err(e) = sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS classes (
-            class_number CITEXT PRIMARY KEY,
+            class_number TEXT PRIMARY KEY,
             class_description TEXT
         );"#,
         )
@@ -82,7 +82,7 @@ pub async fn init_database() -> Result<(), String> {
         if let Err(e) = sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS user_class (
             user_id INTEGER REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
-            class_number CITEXT REFERENCES classes (class_number) ON UPDATE CASCADE ON DELETE CASCADE,
+            class_number TEXT REFERENCES classes (class_number) ON UPDATE CASCADE ON DELETE CASCADE,
             is_instructor BOOLEAN NOT NULL,
             CONSTRAINT student_class_pkey PRIMARY KEY (user_id, class_number)
         );"#,
@@ -139,13 +139,27 @@ pub async fn init_database() -> Result<(), String> {
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS assignment_class (
             assignment_id INTEGER REFERENCES assignments (id),
-            class_number CITEXT REFERENCES classes (class_number)
+            class_number TEXT REFERENCES classes (class_number)
         );",
         )
         .execute(&mut *transaction)
         .await
         {
             return Err(format!("Could not create assignment-class table: {e}"));
+        }
+
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_assignment_grade(
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                assignment_id INTEGER NOT NULL REFERENCES assignments(id),
+                json_results BYTEA,
+                grade DECIMAL(3, 2),
+                error TEXT,
+                CONSTRAINT user_assignment_id_pkey PRIMARY KEY (user_id, assignment_id)
+            );"
+        ).execute(&mut *transaction)
+        .await {
+            return Err(format!("Could not create user_assignment_grade table: {e}"));
         }
 
         if let Err(e) = transaction.commit().await {

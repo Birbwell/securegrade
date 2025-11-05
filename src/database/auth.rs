@@ -21,7 +21,9 @@ impl Session {
 }
 
 pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
-    let session_id = BASE64_STANDARD.decode(token).unwrap();
+    let Ok(session_id) = BASE64_STANDARD.decode(token) else {
+        return Err("Invalid token format".into());
+    };
     let session_hash = Sha512::digest(session_id).to_vec();
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {

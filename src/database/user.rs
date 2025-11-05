@@ -112,7 +112,6 @@ pub async fn login_user(user: Request) -> Result<[u8; 16], String> {
 
         rand::fill(&mut session_id);
 
-        tracing::info!("{}", BASE64_STANDARD.encode(&session_id));
         let session_hash = Sha512::digest(session_id).to_vec();
 
         let current_time = chrono::Utc::now();

@@ -1,12 +1,71 @@
 [preferences]
 assignment_name = "Assignment 1"
-description = "Add two numbers."
+description = "Divide two numbers."
 
 [tests.First]
-input = "1 2"
-output = "3"
+input = "smay"
+output = "yams"
 
 [tests.Second]
-input = "24 48"
-output = "72"
-public = true
+input = "smay"
+output = "yams"
+
+[tests.Third]
+input = "smay"
+output = "yams"
+
+[tests.Fourth]
+input = "smay"
+output = "yams"
+
+[tests.Fifth]
+input = "smay"
+output = "yams"
+
+[tests.Sixth]
+input = "smay"
+output = "yams"
+
+[tests.Sevent]
+input = "smay"
+output = "yams"
+
+[tests.Eighth]
+input = "smay"
+output = "yams"
+
+[tests.Ninth]
+input = "smay"
+output = "yams"
+
+[tests.Tenth]
+input = "smay"
+output = "yams"
+
+[tests.Eleventh]
+input = "smay"
+output = "yams"
+
+[tests.Twelfth]
+input = "smay"
+output = "yams"
+
+[tests.Thirteenth]
+input = "smay"
+output = "yams"
+
+[tests.Fourteenth]
+input = "smay"
+output = "yams"
+
+[tests.Fifteenth]
+input = "smay"
+output = "yams"
+
+[tests.Sixteenth]
+input = "smay"
+output = "yams"
+
+[tests.Seventeenth]
+input = "smay"
+output = "yams"

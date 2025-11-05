@@ -52,8 +52,8 @@ impl ImageBuilder {
 impl Image {
     /// Runs the docker container with the provided input
     /// 
-    /// Ok(Some(output)) => Produced output
-    /// Ok(None) => Timed Out
+    /// Ok(Some(output)) => Produced output \
+    /// Ok(None) => Timed Out \
     /// Err(e) => Error (with message)
     pub async fn exec(
         &self,
@@ -109,26 +109,17 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        info!("Pruning containers...");
+        // FIGURE OUT A WAY TO PRUNE OLD CONTAINERS
+
+        // info!("Removing image {} and associated containers.", self.image_id);
+        // Command::new("podman")
+        //     .args(["rmi", "-f", &self.image_id])
+        //     .spawn()
+        //     .unwrap();
+
         Command::new("podman")
-            .args(["container", "prune", "-f"])
+            .args(["prune", "-af"])
             .spawn()
-            .unwrap()
-            .wait_with_output()
-            .unwrap()
-            .stdout;
-
-        info!("Removing image {}.", self.image_id);
-        let rm_output = Command::new("podman")
-            .args(["rmi", &self.image_id])
-            .spawn()
-            .unwrap()
-            .wait_with_output()
             .unwrap();
-
-        if rm_output.stderr.len() > 0 {
-            error!("Error removing container or images. Please review.");
-            error!("{}", String::from_utf8(rm_output.stderr).unwrap());
-        }
     }
 }

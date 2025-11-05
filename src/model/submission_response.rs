@@ -27,6 +27,7 @@ pub struct Test {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SubmissionResponse {
     tests: Vec<Test>,
+    passes: usize,
 }
 
 impl SubmissionResponse {
@@ -35,7 +36,8 @@ impl SubmissionResponse {
         self.tests.push(Test {
             test_name: test_name.into(),
             status: "PASS".into(),
-        })
+        });
+        self.passes += 1;
     }
 
     pub fn fail(&mut self, test_name: impl Into<String>) {
@@ -79,5 +81,9 @@ impl SubmissionResponse {
             test_name: test_name.into(),
             status: format!("Err: {}", error_msg.into()),
         })
+    }
+
+    pub fn score(&self) -> f32 {
+        self.passes as f32 / self.tests.len() as f32
     }
 }
