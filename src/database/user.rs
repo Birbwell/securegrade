@@ -2,7 +2,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
-use crate::model::request::Request;
+use crate::model::request::ClientRequest;
 
 use super::POSTGRES;
 
@@ -38,7 +38,7 @@ pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32
     None
 }
 
-pub async fn register_user(new_user: Request) -> Result<[u8; 16], String> {
+pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = new_user.get_login() else {
         return Err(format!("Missing fields user_name or pass in request"));
     };
@@ -87,7 +87,7 @@ pub async fn register_user(new_user: Request) -> Result<[u8; 16], String> {
     Ok(login_user(new_user).await?)
 }
 
-pub async fn login_user(user: Request) -> Result<[u8; 16], String> {
+pub async fn login_user(user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = user.get_login() else {
         return Err(format!("Missing fields user_name or pass"));
     };

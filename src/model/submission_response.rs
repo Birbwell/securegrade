@@ -1,27 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-// #[derive(Debug, Serialize, Deserialize)]
-// enum TestStatus {
-//     Pass,
-//     Fail,
-//     PubFail {
-//         input: String,
-//         expected: String,
-//         found: String,
-//     },
-//     TimeOut,
-//     Err(String),
-// }
-
-// #[derive(Debug, Default, Serialize, Deserialize)]
-// pub struct SubmissionResponse {
-//     tests: Vec<(String, TestStatus)>,
-// }
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Test {
     test_name: String,
     status: String,
+    input_output: Option<InputOutput>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -30,12 +13,38 @@ pub struct SubmissionResponse {
     passes: usize,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct InputOutput {
+    input: String,
+    expected: String,
+    found: String,
+}
+
 impl SubmissionResponse {
     pub fn pass(&mut self, test_name: impl Into<String>) {
-        // self.tests.push((test_name.into(), TestStatus::Pass));
         self.tests.push(Test {
             test_name: test_name.into(),
             status: "PASS".into(),
+            input_output: None,
+        });
+        self.passes += 1;
+    }
+
+    pub fn pub_pass(
+        &mut self,
+        test_name: impl Into<String>,
+        input: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) {
+        self.tests.push(Test {
+            test_name: test_name.into(),
+            status: "PASS".into(),
+            input_output: Some(InputOutput {
+                input: input.into(),
+                expected: expected.into(),
+                found: found.into(),
+            }),
         });
         self.passes += 1;
     }
@@ -45,7 +54,26 @@ impl SubmissionResponse {
         self.tests.push(Test {
             test_name: test_name.into(),
             status: "FAIL".into(),
+            input_output: None,
         })
+    }
+
+    pub fn pub_fail(
+        &mut self,
+        test_name: impl Into<String>,
+        input: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) {
+        self.tests.push(Test {
+            test_name: test_name.into(),
+            status: "FAIL".into(),
+            input_output: Some(InputOutput {
+                input: input.into(),
+                expected: expected.into(),
+                found: found.into(),
+            }),
+        });
     }
 
     pub fn time_out(&mut self, test_name: impl Into<String>) {
@@ -53,34 +81,52 @@ impl SubmissionResponse {
         self.tests.push(Test {
             test_name: test_name.into(),
             status: "TIMED OUT".into(),
+            input_output: None,
         })
     }
 
-    // pub fn pub_fail(
-    //     &mut self,
-    //     test_name: impl Into<String>,
-    //     input: impl Into<String>,
-    //     expected: impl Into<String>,
-    //     found: impl Into<String>,
-    // ) {
-    //     self.tests.push((
-    //         test_name.into(),
-    //         TestStatus::PubFail {
-    //             input: input.into(),
-    //             expected: expected.into(),
-    //             found: found.into(),
-    //         },
-    //     ));
-    // }
-
-    pub fn err(&mut self, test_name: impl Into<String>, error_msg: impl Into<String>) {
-        // self.tests
-        // .push((test_name.into(), TestStatus::Err(error_msg.into())));
-
+    pub fn pub_time_out(
+        &mut self,
+        test_name: impl Into<String>,
+        input: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) {
         self.tests.push(Test {
             test_name: test_name.into(),
-            status: format!("Err: {}", error_msg.into()),
+            status: "TIMED OUT".into(),
+            input_output: Some(InputOutput {
+                input: input.into(),
+                expected: expected.into(),
+                found: found.into(),
+            }),
+        });
+    }
+
+    pub fn err(&mut self, test_name: impl Into<String>) {
+        self.tests.push(Test {
+            test_name: test_name.into(),
+            status: "ERR".into(),
+            input_output: None,
         })
+    }
+
+    pub fn pub_err(
+        &mut self,
+        test_name: impl Into<String>,
+        input: impl Into<String>,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) {
+        self.tests.push(Test {
+            test_name: test_name.into(),
+            status: "ERR".into(),
+            input_output: Some(InputOutput {
+                input: input.into(),
+                expected: expected.into(),
+                found: found.into(),
+            }),
+        });
     }
 
     pub fn score(&self) -> f32 {

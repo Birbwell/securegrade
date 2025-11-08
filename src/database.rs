@@ -153,7 +153,7 @@ pub async fn init_database() -> Result<(), String> {
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 assignment_id INTEGER NOT NULL REFERENCES assignments(id),
                 json_results BYTEA,
-                grade DECIMAL(3, 2),
+                grade FLOAT4,
                 error TEXT,
                 CONSTRAINT user_assignment_id_pkey PRIMARY KEY (user_id, assignment_id)
             );"

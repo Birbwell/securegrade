@@ -24,11 +24,12 @@ impl ImageBuilder {
 
     /// Build the docker container object
     pub fn build(self) -> Result<Image, String> {
-        warn!("{}", self.directory);
         let container = Command::new("podman")
             .args(["buildx", "build", "-q", &self.directory])
             .output()
             .unwrap();
+
+        tracing::warn!("SMAY");
 
         if container.stderr.len() > 0 {
             let err_str = String::from_utf8(container.stderr)
@@ -117,9 +118,9 @@ impl Drop for Image {
         //     .spawn()
         //     .unwrap();
 
-        Command::new("podman")
-            .args(["prune", "-af"])
-            .spawn()
-            .unwrap();
+        // Command::new("podman")
+        //     .args(["image", "prune", "-af"])
+        //     .spawn()
+        //     .unwrap();
     }
 }

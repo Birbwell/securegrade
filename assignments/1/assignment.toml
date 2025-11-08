@@ -1,71 +1,17 @@
 [preferences]
 assignment_name = "Assignment 1"
 description = "Divide two numbers."
+timeout = 2
 
 [tests.First]
 input = "smay"
 output = "yams"
+public = true
 
 [tests.Second]
-input = "smay"
-output = "yams"
+input = "smelly"
+output = "yllems"
 
 [tests.Third]
-input = "smay"
-output = "yams"
-
-[tests.Fourth]
-input = "smay"
-output = "yams"
-
-[tests.Fifth]
-input = "smay"
-output = "yams"
-
-[tests.Sixth]
-input = "smay"
-output = "yams"
-
-[tests.Sevent]
-input = "smay"
-output = "yams"
-
-[tests.Eighth]
-input = "smay"
-output = "yams"
-
-[tests.Ninth]
-input = "smay"
-output = "yams"
-
-[tests.Tenth]
-input = "smay"
-output = "yams"
-
-[tests.Eleventh]
-input = "smay"
-output = "yams"
-
-[tests.Twelfth]
-input = "smay"
-output = "yams"
-
-[tests.Thirteenth]
-input = "smay"
-output = "yams"
-
-[tests.Fourteenth]
-input = "smay"
-output = "yams"
-
-[tests.Fifteenth]
-input = "smay"
-output = "yams"
-
-[tests.Sixteenth]
-input = "smay"
-output = "yams"
-
-[tests.Seventeenth]
-input = "smay"
-output = "yams"
+input = "smelly3"
+output = "3yllems"

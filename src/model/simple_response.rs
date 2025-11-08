@@ -5,18 +5,14 @@ struct Permissions {
     admin: bool,
     instructor: bool,
     student: bool,
-    user: bool
+    user: bool,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SimpleResponse {
     body: String,
-    is_admin: bool,
-    is_instructor: bool,
-    is_student: bool,
-    is_user: bool,
+    perms: Permissions,
 }
-
 
 impl SimpleResponse {
     pub fn new(
@@ -28,10 +24,12 @@ impl SimpleResponse {
     ) -> Self {
         Self {
             body,
-            is_admin,
-            is_instructor,
-            is_student,
-            is_user
+            perms: Permissions {
+                admin: is_admin,
+                instructor: is_instructor,
+                student: is_student,
+                user: is_user,
+            },
         }
     }
 }

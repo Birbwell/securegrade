@@ -1,17 +1,15 @@
 use crate::database::POSTGRES;
-use crate::database::user::get_user_from_session;
+use crate::model::assignment_grade::AssignmentGrade;
 use crate::model::assignment_item::AssignmentItem;
 use crate::model::class_item::ClassItem;
-use crate::model::request::Request;
-use crate::model::submission_response::SubmissionResponse;
+use crate::model::request::ClientRequest;
 
-use axum::Json;
-use axum::http::StatusCode;
-use axum::response::Response;
+use axum::body::Body;
+use axum::http::{Response, StatusCode};
 use chrono::Utc;
 use sqlx::Row;
 
-pub async fn new_class(obj: Request) -> Result<(), String> {
+pub async fn new_class(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, class_description, instructor_user_name)) = obj.get_new_class() else {
         return Err("Missing fields class_number or instructor_user_name".into());
     };
@@ -57,7 +55,7 @@ pub async fn new_class(obj: Request) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn add_student(obj: Request) -> Result<(), String> {
+pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, student_user_name)) = obj.get_new_student() else {
         return Err("Missing fields class_number or student_user_name".into());
     };
@@ -84,7 +82,7 @@ pub async fn add_student(obj: Request) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn add_instructor(obj: Request) -> Result<(), String> {
+pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, instructor_user_name)) = obj.get_new_instructor() else {
         return Err("Missing fields class_number or student_user_name".into());
     };
@@ -149,10 +147,7 @@ pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
     Err("Server Error".into())
 }
 
-pub async fn get_assignment(
-    class_number: String,
-    assignment_id: i32,
-) -> Result<AssignmentItem, String> {
+pub async fn get_assignment(assignment_id: i32) -> Result<AssignmentItem, String> {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -186,7 +181,9 @@ pub async fn get_assignment(
     Err("Server Error".into())
 }
 
-pub async fn get_assignments(class_number: String) -> Result<Vec<AssignmentItem>, String> {
+pub async fn get_assignments(
+    class_number: impl Into<String>,
+) -> Result<Vec<AssignmentItem>, String> {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -196,7 +193,7 @@ pub async fn get_assignments(class_number: String) -> Result<Vec<AssignmentItem>
             JOIN assignment_class c ON c.class_number = $1
             ORDER BY a.id ASC;",
         )
-        .bind(class_number)
+        .bind(class_number.into())
         .fetch_all(&mut *transaction)
         .await
         {
@@ -267,6 +264,42 @@ pub async fn add_assignment(
     Err("Internal Error".into())
 }
 
+pub async fn get_assignment_scores(assignment_id: i32) -> Result<Vec<AssignmentGrade>, ()> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let Ok(rows) = sqlx::query("SELECT grade, id, first_name, last_name, user_name
+            FROM user_assignment_grade 
+            JOIN users ON users.id = user_assignment_grade.user_id
+            WHERE assignment_id = $1"
+        )
+            .bind(assignment_id)
+            .fetch_all(&mut *transaction)
+            .await
+        else {
+            return Err(());
+        };
+
+        let mut assignment_grades = vec![];
+        for row in rows {
+            let f_n: String = row.get("first_name");
+            let l_n: String = row.get("last_name");
+            let grade = AssignmentGrade {
+                name: format!("{} {}", f_n, l_n),
+                username: row.get("user_name"),
+                score: row.get("grade")
+            };
+            assignment_grades.push(grade);
+        }
+
+        transaction.commit().await.unwrap();
+        return Ok(assignment_grades);
+    }
+
+    Err(())
+}
+
 pub async fn container_add_grade(
     user_id: i32,
     assignment_id: i32,
@@ -295,7 +328,26 @@ pub async fn container_add_grade(
     Ok(())
 }
 
-pub async fn container_retrieve_grade(user_id: i32, assignment_id: i32) -> Response {
+pub async fn remove_old_grade(user_id: i32, assignment_id: i32) -> Result<(), String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        sqlx::query("UPDATE user_assignment_grade SET json_results = NULL, grade = NULL, error = NULL WHERE user_id = $1 AND assignment_id = $2;")
+            .bind(user_id)
+            .bind(assignment_id)
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+
+        transaction.commit().await.unwrap();
+        return Ok(());
+    }
+
+    return Err("Failed to acquire transaction lock".into());
+}
+
+pub async fn container_retrieve_grade(user_id: i32, assignment_id: i32) -> Response<Body> {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -349,14 +401,17 @@ pub async fn submission_in_progress(user_id: i32, assignment_id: i32) -> bool {
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
-        let res = match sqlx::query("SELECT * FROM user_assignment_grade WHERE user_id = $1 AND assignment_id = $2;")
-            .bind(1)
-            .bind(2)
-            .fetch_optional(&mut *transaction)
-            .await {
-                Ok(Some(r)) => r,
-                _ => return false,
-            };
+        let res = match sqlx::query(
+            "SELECT * FROM user_assignment_grade WHERE user_id = $1 AND assignment_id = $2 AND grade IS NULL;",
+        )
+        .bind(user_id)
+        .bind(assignment_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        {
+            Ok(Some(r)) => r,
+            _ => return false,
+        };
 
         let _user_id: i32 = res.get("user_id");
         let _assignment_id: i32 = res.get("assignment_id");

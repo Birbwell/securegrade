@@ -169,13 +169,13 @@ pub async fn session_is_instructor(
 
         let user_id: i32 = row.get("user_id");
 
-        let Ok(row) = sqlx::query("SELECT is_admin FROM users WHERE id = $1;")
-            .bind(user_id)
-            .fetch_one(&mut *transaction)
-            .await
-        else {
-            return Err(format!("User ID missing from users table: {user_id}"));
-        };
+        // let Ok(row) = sqlx::query("SELECT is_admin FROM users WHERE id = $1;")
+        //     .bind(user_id)
+        //     .fetch_one(&mut *transaction)
+        //     .await
+        // else {
+        //     return Err(format!("User ID missing from users table: {user_id}"));
+        // };
 
         // UNCOMMENT IF YOU WANT ADMINS TO HAVE INSTRUCTOR PRIVELEGES
         // let is_admin: bool = row.get("is_admin");

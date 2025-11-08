@@ -1,29 +1,26 @@
 use std::net::SocketAddr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::usize;
 
-use axum::body::{self, Body};
+use axum::body::Body;
 use axum::extract::Path;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
-use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
+use axum::http::request::Parts;
+use axum::http::{Method, Response, StatusCode};
 use axum::middleware::{Next, from_fn};
-use axum::response::Response;
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_server::tls_rustls::RustlsConfig;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::container::ContainerEntry;
-// use crate::container::run_container;
 use crate::database::auth::{
     Session, session_exists_and_valid, session_is_admin, session_is_instructor, session_is_student,
 };
-use crate::database::operations::{submission_in_progress, container_retrieve_grade};
-use crate::model::assignment_item::AssignmentItem;
-use crate::model::class_item::ClassItem;
-use crate::model::request::Request;
+use crate::database::operations::{container_retrieve_grade, submission_in_progress};
+use crate::model::request::ClientRequest;
 use crate::model::simple_response::SimpleResponse;
 
 mod assignment;
@@ -52,6 +49,10 @@ async fn main() {
         // .route("/api/instructor/{class_number}/add_instructor", post(add_instructor))
         // .route("/api/instructor/{class_number}/add_student", post(add_student))
         .route(
+            "/api/instructor/{class_number}/{assignment_number}/retrieve_scores",
+            get(retrieve_scores),
+        )
+        .route(
             "/api/instructor/{class_number}/add_assignment",
             post(add_assignment),
         )
@@ -63,7 +64,7 @@ async fn main() {
         )
         .route(
             "/api/student/{class_number}/{assignment_id}/retrieve_score",
-            get(retrieve_score)
+            get(retrieve_score),
         )
         .route(
             "/api/student/{class_number}/{assignment_id}",
@@ -107,7 +108,7 @@ async fn handle_basic_auth(
     Path(path_params): Path<Vec<String>>,
     request: axum::http::Request<Body>,
     next: Next,
-) -> Response {
+) -> Response<Body> {
     let (parts, body) = request.into_parts();
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
@@ -175,7 +176,7 @@ async fn handle_student_auth(
     Path(path_params): Path<Vec<String>>,
     request: axum::http::Request<Body>,
     next: Next,
-) -> Response {
+) -> Response<Body> {
     let (parts, body) = request.into_parts();
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
@@ -251,7 +252,7 @@ async fn handle_instructor_auth(
     path_params: Path<Vec<String>>,
     request: axum::http::Request<Body>,
     next: Next,
-) -> Response {
+) -> Response<Body> {
     let (parts, body) = request.into_parts();
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
@@ -312,7 +313,7 @@ async fn handle_instructor_auth(
     }
 }
 
-async fn handle_admin_auth(request: axum::http::Request<Body>, next: Next) -> Response {
+async fn handle_admin_auth(request: axum::http::Request<Body>, next: Next) -> Response<Body> {
     let Some(auth_header) = request.headers().get(&AUTHORIZATION) else {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -342,18 +343,25 @@ async fn handle_admin_auth(request: axum::http::Request<Body>, next: Next) -> Re
     }
 }
 
-async fn create_class(class_data: String) -> Result<String, String> {
-    let class_obj = serde_json::from_str::<Request>(&class_data).unwrap();
-    if let Err(e) = database::operations::new_class(class_obj).await {
-        return Err(format!("Could not create class: {e}"));
+async fn create_class(Json(client_req): Json<ClientRequest>) -> Response<Body> {
+    if let Err(e) = database::operations::new_class(client_req).await {
+        tracing::error!("Could not create class: {e}");
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Error".into())
+            .unwrap();
     };
-    Ok("OK".into())
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body("OK".into())
+        .unwrap();
 }
 
 async fn handle_submission(
     Path(path_params): Path<Vec<String>>,
-    req: axum::http::Request<Body>,
-) -> Response {
+    parts: Parts,
+    zip_file: axum::body::Bytes
+) -> Response<Body> {
     let [_, assignment_id] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -362,9 +370,6 @@ async fn handle_submission(
     };
 
     let assignment_id = assignment_id.parse::<i32>().unwrap();
-
-    let (parts, body) = req.into_parts();
-    let zip_file = axum::body::to_bytes(body, usize::MAX).await.unwrap();
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
         return Response::builder()
@@ -379,15 +384,25 @@ async fn handle_submission(
 
     if submission_in_progress(user_id, assignment_id).await {
         return Response::builder()
-            .status(StatusCode::PROCESSING)
+            .status(StatusCode::TOO_EARLY)
             .body("Previous submission still in queue. Check for results later.".into())
+            .unwrap();
+    }
+
+    if let Err(e) = database::operations::remove_old_grade(user_id, assignment_id).await {
+        tracing::error!(e);
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(e.into())
             .unwrap();
     }
 
     let container_entry = ContainerEntry::new(zip_file, user_id, assignment_id, "python313");
 
     // Add to container queue
-    if let Some(tx) = TX.get() && let Ok(perm) = tx.reserve().await {
+    if let Some(tx) = TX.get()
+        && let Ok(perm) = tx.reserve().await
+    {
         perm.send(container_entry);
     } else {
         return Response::builder()
@@ -396,25 +411,23 @@ async fn handle_submission(
             .unwrap();
     }
 
-    // let results_json = serde_json::to_string(&results).unwrap();
-    // TODO Store results in database
-
     return Response::builder()
         .status(StatusCode::OK)
-        // .body(Body::new(json_out))
         .body("Submission Received.".into())
         .unwrap();
 }
 
-async fn retrieve_score(Path(path_params): Path<Vec<String>>, req: axum::http::Request<Body>) -> Response {
-    let (parts, _) = req.into_parts();
+async fn retrieve_score(
+    Path(path_params): Path<Vec<String>>,
+    parts: Parts,
+) -> Response<Body> {
     let Some(auth_header) = parts.headers.get(AUTHORIZATION) else {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
             .body("Access Denied.".into())
             .unwrap();
     };
-    
+
     let [_, assignment_id] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -437,21 +450,20 @@ async fn retrieve_score(Path(path_params): Path<Vec<String>>, req: axum::http::R
             .unwrap();
     };
 
+    if submission_in_progress(user_id, assignment_id).await {
+        return Response::builder()
+            .status(StatusCode::TOO_EARLY)
+            .body("Submission in progress".into())
+            .unwrap();
+    }
+
     return container_retrieve_grade(user_id, assignment_id).await;
 }
 
 async fn add_assignment(
     Path(path_params): Path<Vec<String>>,
-    req: axum::http::Request<Body>,
-) -> Response {
-    let body = req.into_body();
-    let body_str = axum::body::to_bytes(body, usize::MAX)
-        .await
-        .unwrap()
-        .iter()
-        .map(|u| *u as char)
-        .collect::<String>();
-
+    Json(client_req): Json<ClientRequest>,
+) -> Response<Body> {
     let [class_number, ..] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -459,10 +471,10 @@ async fn add_assignment(
             .unwrap();
     };
 
-    let req = serde_json::from_str::<Request>(&body_str).unwrap();
-    if let (Some(assignment_name), Some(assignment_description)) =
-        (req.assignment_name, req.assignment_description)
-    {
+    if let (Some(assignment_name), Some(assignment_description)) = (
+        client_req.assignment_name,
+        client_req.assignment_description,
+    ) {
         if let Err(e) = database::operations::add_assignment(
             class_number.into(),
             assignment_name,
@@ -488,83 +500,149 @@ async fn add_assignment(
         .unwrap()
 }
 
-async fn get_assignment(
-    Path(path_params): Path<Vec<String>>,
-) -> Result<Json<AssignmentItem>, String> {
-    // let [class_number, assignment_id] = &path_params.get(0..2)[0..2] else {
-    //     return Err("Bad Request".into());
-    // };
-
-    let [class_number, assignment_id] = &path_params[..] else {
-        return Err("Bad Request".into());
+async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+    let [_, assignment_id] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request".into())
+            .unwrap();
     };
     let assignment_id = assignment_id.parse::<i32>().unwrap();
-    let ass = database::operations::get_assignment(class_number.clone(), assignment_id)
+    let ass = database::operations::get_assignment(assignment_id)
         .await
         .unwrap();
 
-    Ok(Json(ass))
+    let ass_json = serde_json::to_string(&ass).unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(ass_json.into())
+        .unwrap();
 }
 
-async fn get_assignments(
-    Path(path_params): Path<Vec<String>>,
-    req: axum::http::Request<Body>,
-) -> Result<Json<Vec<AssignmentItem>>, String> {
+async fn get_assignments(Path(path_params): Path<Vec<String>>) -> Response<Body> {
     if let Some(class_number) = path_params.get(0) {
-        let assignments = database::operations::get_assignments(class_number.clone())
+        let assignments = database::operations::get_assignments(class_number)
             .await
             .unwrap();
-
-        Ok(Json(assignments))
+        let assignments_json = serde_json::to_string(&assignments).unwrap();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .body(assignments_json.into())
+            .unwrap();
     } else {
-        Err("Bad Request".into())
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
     }
 }
 
-async fn get_classes(req: axum::http::Request<Body>) -> Result<Json<Vec<ClassItem>>, String> {
-    let (parts, _) = req.into_parts();
+async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+    let [_, assignment_id] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
 
+    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    let scores = database::operations::get_assignment_scores(assignment_id).await.unwrap();
+
+    let scores_json = serde_json::to_string(&scores).unwrap();
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(scores_json.into())
+        .unwrap();
+}
+
+async fn get_classes(parts: Parts) -> Response<Body> {
     let auth_header = parts.headers.get(&AUTHORIZATION).unwrap().to_str().unwrap();
     let user_id = database::user::get_user_from_session(auth_header)
         .await
         .unwrap();
 
     let class_items = database::operations::get_classes(user_id).await.unwrap();
+    let class_items_json = serde_json::to_string(&class_items).unwrap();
 
-    return Ok(Json(class_items));
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(class_items_json.into())
+        .unwrap();
 }
 
-async fn add_student(instructor_data: String) -> Result<String, String> {
-    let student_obj = serde_json::from_str::<Request>(&instructor_data).unwrap();
-    if let Err(e) = database::operations::add_student(student_obj).await {
-        return Err(format!("Could not add instructor: {e}"));
+async fn add_student(Json(client_req): Json<ClientRequest>) -> Response<Body> {
+    if let Err(e) = database::operations::add_student(client_req).await {
+        tracing::error!("Could not add instructor: {e}");
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Error.".into())
+            .unwrap();
     }
-    Ok("OK".into())
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .body("OK".into())
+        .unwrap()
 }
 
-async fn add_instructor(instructor_data: String) -> Result<String, String> {
-    let instructor_obj = serde_json::from_str::<Request>(&instructor_data).unwrap();
-    if let Err(e) = database::operations::add_instructor(instructor_obj).await {
-        return Err(format!("Could not add instructor: {e}"));
+async fn add_instructor(Json(client_req): Json<ClientRequest>) -> Response<Body> {
+    if let Err(e) = database::operations::add_instructor(client_req).await {
+        tracing::error!("Could not add instructor: {e}");
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Error.".into())
+            .unwrap();
     }
-    Ok("OK".into())
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .body("OK".into())
+        .unwrap()
 }
 
-async fn login(login_data: String) -> Result<Json<Session>, Json<String>> {
-    let login_obj = serde_json::from_str::<Request>(&login_data).unwrap();
-    match database::user::login_user(login_obj).await {
-        Ok(s) => Ok(Json(Session::new(s))),
-        Err(e) => Err(Json(e)),
+async fn login(Json(login_req): Json<ClientRequest>) -> Response<Body> {
+    match database::user::login_user(login_req).await {
+        Ok(s) => {
+            let session = Session::new(s);
+            let session_json = serde_json::to_string(&session).unwrap();
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(session_json.into())
+                .unwrap()
+        }
+        Err(e) => {
+            tracing::error!("{e}");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Error".into())
+                .unwrap()
+        }
     }
 }
 
-async fn signup(signup_data: String) -> Result<Json<Session>, Json<String>> {
-    let Ok(signup_obj) = serde_json::from_str::<Request>(&signup_data) else {
-        return Err(Json("Improperly formatted data".into()));
-    };
-
-    match database::user::register_user(signup_obj).await {
-        Ok(s) => Ok(Json(Session::new(s))),
-        Err(e) => Err(Json(e)),
+async fn signup(Json(signup_req): Json<ClientRequest>) -> Response<Body> {
+    match database::user::register_user(signup_req).await {
+        Ok(s) => {
+            let session = Session::new(s);
+            let session_json = serde_json::to_string(&session).unwrap();
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(session_json.into())
+                .unwrap()
+        }
+        Err(e) => {
+            tracing::error!("{e}");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Error".into())
+                .unwrap()
+        }
     }
 }

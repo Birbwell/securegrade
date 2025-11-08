@@ -14,10 +14,6 @@ pub struct Assignment {
 }
 
 impl Assignment {
-    pub fn get_description(&self) -> Option<String> {
-        self.preferences.description.clone()
-    }
-
     pub fn get_timeout(&self) -> Option<Duration> {
         self.preferences
             .timeout

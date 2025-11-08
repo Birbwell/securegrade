@@ -1,20 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{database, model::file_object::FileObject};
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub enum RequestPermissions {
-    Admin,
-    Instructor,
-    Student,
-    User,
-    #[default]
-    None,
-}
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Request {
+pub struct ClientRequest {
     // Login
     pub user_name: Option<String>,
     pub pass: Option<String>,
@@ -43,7 +31,7 @@ pub struct Request {
     pub zip_file: Option<Vec<u8>>,
 }
 
-impl Request {
+impl ClientRequest {
     /// Returns (user_name, pass)
     pub fn get_login(&self) -> Option<(String, String)> {
         if let (Some(uname), Some(pass)) = (self.user_name.clone(), self.pass.clone()) {

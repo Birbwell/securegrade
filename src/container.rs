@@ -1,9 +1,7 @@
 use std::{
-    collections::VecDeque,
-    fs::{copy, create_dir_all, read_dir, read_to_string, remove_dir_all, write},
+    fs::{copy, create_dir_all, read_dir, read_to_string, remove_dir_all},
     path::PathBuf,
     process::Command,
-    sync::LazyLock,
 };
 
 use tokio::sync::Semaphore;
@@ -47,13 +45,7 @@ impl ContainerEntry {
     }
 }
 
-pub async fn add_to_container_queue(container_entry: ContainerEntry) {
-    // let mut container_queue = CONTAINER_QUEUE.write().await;
-    // container_queue.push_front(container_entry);
-}
-
 pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>) -> ! {
-    // let mut semaphore = Semaphore::new(5);
     static SEMAPHORE: Semaphore = Semaphore::const_new(10);
     loop {
         if let Ok(perm) = SEMAPHORE.acquire().await
@@ -165,44 +157,50 @@ async fn run_container(
             test.output.clone().unwrap()
         };
 
-        let container_output = match image.exec(input, assignment.get_timeout()).await {
+        let container_output = match image.exec(&input, assignment.get_timeout()).await {
             Ok(Some(s)) => s,
             Ok(None) => {
-                // test_results.time_out(test_name);
-                // warn!("Timed Out");
-                test_results.time_out(test_name);
+                if test.public {
+                    test_results.pub_time_out(test_name, input, output, "");
+                } else {
+                    test_results.time_out(test_name);
+                }
                 continue;
             }
             Err(e) => {
-                // test_results.err(test_name, e);
-                // warn!("Container Error: {e}");
-                test_results.err(test_name, e);
+                if test.public {
+                    test_results.pub_err(test_name, input, output, e);
+                } else {
+                    test_results.err(test_name);
+                }
                 continue;
             }
         };
 
+        warn!("{container_output} :: {output}");
+
         if container_output.trim() == output.trim() {
-            // info!("Assignment {}, {} :: OK", sub_ob.assignment_id, test_name);
-            test_results.pass(test_name);
+            if test.public {
+                test_results.pub_pass(
+                    test_name,
+                    input.trim(),
+                    output.trim(),
+                    container_output.trim(),
+                );
+            } else {
+                test_results.pass(test_name);
+            }
         } else {
-            // info!(
-            //     "Assignment {}, {} :: Expected {:?}, found {:?}",
-            //     sub_ob.assignment_id,
-            //     test_name,
-            //     output.trim(),
-            //     container_output.trim()
-            // );
-            // if test.public {
-            //     test_results.pub_fail(
-            //         test_name,
-            //         input.trim(),
-            //         output.trim(),
-            //         container_output.trim(),
-            //     );
-            // } else {
-            //     test_results.fail(test_name);
-            // }
-            test_results.fail(test_name);
+            if test.public {
+                test_results.pub_fail(
+                    test_name,
+                    input.trim(),
+                    output.trim(),
+                    container_output.trim(),
+                );
+            } else {
+                test_results.fail(test_name);
+            }
         }
     }
 
