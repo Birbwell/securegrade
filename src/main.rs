@@ -1,14 +1,14 @@
+use std::env::var;
 use std::net::SocketAddr;
 use std::sync::OnceLock;
-use std::usize;
 
 use axum::body::Body;
 use axum::extract::Path;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::request::Parts;
-use axum::http::{Method, Response, StatusCode};
+use axum::http::{HeaderName, HeaderValue, Method, Response, StatusCode};
 use axum::middleware::{Next, from_fn};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -20,14 +20,16 @@ use crate::database::auth::{
     Session, session_exists_and_valid, session_is_admin, session_is_instructor, session_is_student,
 };
 use crate::database::operations::{container_retrieve_grade, submission_in_progress};
+use crate::model::class_info::ClassInfo;
 use crate::model::request::ClientRequest;
-use crate::model::simple_response::SimpleResponse;
 
 mod assignment;
 mod container;
 mod database;
 mod image;
 mod model;
+
+const OK_JSON: &'static str = r#"{ "message": "OK" }"#;
 
 static TX: OnceLock<tokio::sync::mpsc::Sender<ContainerEntry>> = OnceLock::new();
 
@@ -41,13 +43,25 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
         .allow_headers([AUTHORIZATION, CONTENT_TYPE])
-        .allow_origin(AllowOrigin::any());
+        .allow_origin(AllowOrigin::any())
+        .expose_headers([
+            CONTENT_TYPE,
+            HeaderName::from_lowercase(b"admin").unwrap(),
+            HeaderName::from_lowercase(b"instructor").unwrap(),
+            HeaderName::from_lowercase(b"student").unwrap(),
+        ]);
 
     let app: Router = Router::new()
         .route("/api/admin/create_class", post(create_class))
         .layer(from_fn(handle_admin_auth)) //^^ Admin Layer
-        // .route("/api/instructor/{class_number}/add_instructor", post(add_instructor))
-        // .route("/api/instructor/{class_number}/add_student", post(add_student))
+        .route(
+            "/api/instructor/{class_number}/add_instructor",
+            put(add_instructor),
+        )
+        .route(
+            "/api/instructor/{class_number}/{assignment_number}/download/{username}",
+            get(download_submission),
+        )
         .route(
             "/api/instructor/{class_number}/{assignment_number}/retrieve_scores",
             get(retrieve_scores),
@@ -57,6 +71,14 @@ async fn main() {
             post(add_assignment),
         )
         // .route("/api/update_assignment", put(update_assignment))
+        .route(
+            "/api/instructor/{class_number}/add_student",
+            put(add_student),
+        )
+        .route(
+            "/api/instructor/{class_number}/list_all_students",
+            get(list_all_students),
+        )
         .layer(from_fn(handle_instructor_auth)) //^^ Instructor Layer
         .route(
             "/api/student/{class_number}/{assignment_id}/submit",
@@ -70,9 +92,10 @@ async fn main() {
             "/api/student/{class_number}/{assignment_id}",
             get(get_assignment),
         )
-        .route("/api/student/{class_number}", get(get_assignments))
+        .route("/api/student/{class_number}", get(get_class_info))
         .layer(from_fn(handle_student_auth)) //^^ Student Layer
         .route("/api/get_classes", get(get_classes))
+        .route("/api/list_all_students", get(list_all_students))
         // .route("/api/validate", get(validate))
         .layer(from_fn(handle_basic_auth)) //^^ User Layer
         .route("/api/login", post(login))
@@ -93,8 +116,10 @@ async fn main() {
 
     let (tx, rx) = tokio::sync::mpsc::channel::<ContainerEntry>(i32::MAX as usize);
 
+    let n_threads = var("NTHREADS").ok().and_then(|f| f.parse::<usize>().ok());
+
     tokio::spawn(async move {
-        container::container_queue(rx).await;
+        container::container_queue(rx, n_threads).await;
     });
 
     let _ = TX.set(tx).unwrap();
@@ -104,7 +129,6 @@ async fn main() {
 }
 
 async fn handle_basic_auth(
-    // class_number: Option<Path<(String, Option<String>)>>,
     Path(path_params): Path<Vec<String>>,
     request: axum::http::Request<Body>,
     next: Next,
@@ -127,7 +151,7 @@ async fn handle_basic_auth(
     match session_exists_and_valid(token.clone()).await {
         Ok(true) => {
             let req = axum::http::Request::from_parts(parts, body);
-            let resp = next.run(req).await;
+            let mut resp = next.run(req).await;
 
             let is_admin = session_is_admin(token.clone()).await.unwrap();
             let (is_instructor, is_student) = if let Some(class_number) = path_params.get(0) {
@@ -143,20 +167,20 @@ async fn handle_basic_auth(
                 (false, false)
             };
 
-            let (resp_parts, resp_body) = resp.into_parts();
+            resp.headers_mut().insert(
+                "admin",
+                HeaderValue::from_str(&is_admin.to_string()).unwrap(),
+            );
+            resp.headers_mut().insert(
+                "instructor",
+                HeaderValue::from_str(&is_instructor.to_string()).unwrap(),
+            );
+            resp.headers_mut().insert(
+                "student",
+                HeaderValue::from_str(&is_student.to_string()).unwrap(),
+            );
 
-            let resp_body_str = axum::body::to_bytes(resp_body, usize::MAX)
-                .await
-                .unwrap()
-                .iter()
-                .map(|u| *u as char)
-                .collect::<String>();
-
-            let new_resp =
-                SimpleResponse::new(resp_body_str, is_admin, is_instructor, is_student, true);
-
-            let new_resp_body = serde_json::to_string(&new_resp).unwrap();
-            return Response::from_parts(resp_parts, Body::new(new_resp_body));
+            return resp;
         }
         Ok(false) => Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -360,7 +384,7 @@ async fn create_class(Json(client_req): Json<ClientRequest>) -> Response<Body> {
 async fn handle_submission(
     Path(path_params): Path<Vec<String>>,
     parts: Parts,
-    zip_file: axum::body::Bytes
+    zip_file: axum::body::Bytes,
 ) -> Response<Body> {
     let [_, assignment_id] = &path_params[..] else {
         return Response::builder()
@@ -397,6 +421,16 @@ async fn handle_submission(
             .unwrap();
     }
 
+    // Mark as submission Received
+    if let Err(e) = database::operations::mark_as_submitted(user_id, assignment_id, &zip_file).await
+    {
+        tracing::error!(e);
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Server Error.".into())
+            .unwrap();
+    };
+
     let container_entry = ContainerEntry::new(zip_file, user_id, assignment_id, "python313");
 
     // Add to container queue
@@ -417,10 +451,7 @@ async fn handle_submission(
         .unwrap();
 }
 
-async fn retrieve_score(
-    Path(path_params): Path<Vec<String>>,
-    parts: Parts,
-) -> Response<Body> {
+async fn retrieve_score(Path(path_params): Path<Vec<String>>, parts: Parts) -> Response<Body> {
     let Some(auth_header) = parts.headers.get(AUTHORIZATION) else {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -520,15 +551,21 @@ async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Body> 
         .unwrap();
 }
 
-async fn get_assignments(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+async fn get_class_info(Path(path_params): Path<Vec<String>>) -> Response<Body> {
     if let Some(class_number) = path_params.get(0) {
         let assignments = database::operations::get_assignments(class_number)
             .await
             .unwrap();
-        let assignments_json = serde_json::to_string(&assignments).unwrap();
+
+        let instructors = database::operations::get_instructors(class_number).await.unwrap();
+
+        let class_info = ClassInfo::new(assignments, instructors);
+
+        let class_json = serde_json::to_string(&class_info).unwrap();
+
         return Response::builder()
             .status(StatusCode::OK)
-            .body(assignments_json.into())
+            .body(class_json.into())
             .unwrap();
     } else {
         return Response::builder()
@@ -553,12 +590,42 @@ async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<Body>
             .unwrap();
     };
 
-    let scores = database::operations::get_assignment_scores(assignment_id).await.unwrap();
+    let scores = database::operations::get_assignment_scores(assignment_id)
+        .await
+        .unwrap();
 
     let scores_json = serde_json::to_string(&scores).unwrap();
     return Response::builder()
         .status(StatusCode::OK)
         .body(scores_json.into())
+        .unwrap();
+}
+
+async fn download_submission(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+    let [_, assignment_id, username] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    tracing::warn!("Downloading {} :: {}", assignment_id, username);
+
+    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    let zip = database::operations::download_submission(username.clone(), assignment_id)
+        .await
+        .unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/zip")
+        .body(zip.into())
         .unwrap();
 }
 
@@ -588,8 +655,30 @@ async fn add_student(Json(client_req): Json<ClientRequest>) -> Response<Body> {
 
     Response::builder()
         .status(StatusCode::OK)
-        .body("OK".into())
+        .body(OK_JSON.into())
         .unwrap()
+}
+
+async fn list_all_students(class_number: Option<Path<String>>) -> Response<Body> {
+    let class_number = class_number.and_then(|f| Some(f.0));
+
+    let user_info = match database::operations::list_all_students(class_number).await {
+        Ok(user_info) => user_info,
+        Err(e) => {
+            tracing::error!(e);
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Server Error.".into())
+                .unwrap();
+        }
+    };
+
+    let users_json = serde_json::to_string(&user_info).unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(users_json.into())
+        .unwrap();
 }
 
 async fn add_instructor(Json(client_req): Json<ClientRequest>) -> Response<Body> {
@@ -603,7 +692,7 @@ async fn add_instructor(Json(client_req): Json<ClientRequest>) -> Response<Body>
 
     Response::builder()
         .status(StatusCode::OK)
-        .body("OK".into())
+        .body(OK_JSON.into())
         .unwrap()
 }
 

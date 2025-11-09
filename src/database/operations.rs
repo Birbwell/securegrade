@@ -1,8 +1,10 @@
 use crate::database::POSTGRES;
 use crate::model::assignment_grade::AssignmentGrade;
-use crate::model::assignment_item::AssignmentItem;
+use crate::model::class_info::AssignmentInfo;
 use crate::model::class_item::ClassItem;
+use crate::model::class_info::InstructorInfo;
 use crate::model::request::ClientRequest;
+use crate::model::user_info::UserInfo;
 
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
@@ -82,6 +84,58 @@ pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
     Ok(())
 }
 
+pub async fn list_all_students(
+    exclude_from_class: Option<String>,
+) -> Result<Vec<UserInfo>, String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let rows = if let Some(exclude) = exclude_from_class {
+            match sqlx::query(
+                "SELECT DISTINCT first_name, last_name, user_name
+                    FROM users
+                    LEFT JOIN user_class ON users.id = user_class.user_id
+                    WHERE user_class.class_number IS NULL OR user_class.class_number <> $1;",
+            )
+            .bind(exclude)
+            .fetch_all(&mut *transaction)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(format!("{e}"));
+                }
+            }
+        } else {
+            match sqlx::query("SELECT * FROM users;")
+                .fetch_all(&mut *transaction)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    return Err(format!("{e}"));
+                }
+            }
+        };
+
+        let users = rows
+            .iter()
+            .map(|f| {
+                let username: String = f.get("user_name");
+                let first_name: String = f.get("first_name");
+                let last_name: String = f.get("last_name");
+
+                UserInfo::new(first_name, last_name, username)
+            })
+            .collect::<Vec<UserInfo>>();
+
+        Ok(users)
+    } else {
+        Err("Failed to acquire postgres lock".into())
+    }
+}
+
 pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, instructor_user_name)) = obj.get_new_instructor() else {
         return Err("Missing fields class_number or student_user_name".into());
@@ -147,7 +201,7 @@ pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
     Err("Server Error".into())
 }
 
-pub async fn get_assignment(assignment_id: i32) -> Result<AssignmentItem, String> {
+pub async fn get_assignment(assignment_id: i32) -> Result<AssignmentInfo, String> {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -165,7 +219,7 @@ pub async fn get_assignment(assignment_id: i32) -> Result<AssignmentItem, String
             let assignment_name: String = row.get("assignment_name");
             let assignment_description: Option<String> = row.get("assignment_description");
             let deadline: chrono::DateTime<Utc> = row.get("deadline");
-            AssignmentItem {
+            AssignmentInfo {
                 assignment_id,
                 assignment_name,
                 assignment_description,
@@ -183,7 +237,7 @@ pub async fn get_assignment(assignment_id: i32) -> Result<AssignmentItem, String
 
 pub async fn get_assignments(
     class_number: impl Into<String>,
-) -> Result<Vec<AssignmentItem>, String> {
+) -> Result<Vec<AssignmentInfo>, String> {
     let postgres_pool = POSTGRES.lock().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -208,14 +262,14 @@ pub async fn get_assignments(
                 let assignment_name: String = r.get("assignment_name");
                 let assignment_description: Option<String> = r.get("assignment_description");
                 let deadline: chrono::DateTime<Utc> = r.get("deadline");
-                AssignmentItem {
+                AssignmentInfo {
                     assignment_id,
                     assignment_name,
                     assignment_description,
                     assignment_deadline: deadline.to_string(),
                 }
             })
-            .collect::<Vec<AssignmentItem>>();
+            .collect::<Vec<AssignmentInfo>>();
 
         transaction.commit().await.unwrap();
 
@@ -223,6 +277,39 @@ pub async fn get_assignments(
     }
 
     Err("Server Error".into())
+}
+
+pub async fn get_instructors(class_number: impl Into<String>) -> Result<Vec<InstructorInfo>, String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let rows = match sqlx::query(
+            "SELECT DISTINCT first_name, last_name, email
+            FROM users
+            JOIN user_class ON users.id = user_class.user_id
+            WHERE user_class.class_number = $1 AND user_class.is_instructor = TRUE;",
+        )
+        .bind(class_number.into())
+        .fetch_all(&mut *transaction)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(format!("{e}")),
+        };
+
+        transaction.commit().await.unwrap();
+
+        let user_info = rows.iter().map(|f| {
+            let last_name: String = f.get("last_name");
+            let first_name: String = f.get("first_name");
+            InstructorInfo::new(first_name, last_name)
+        }).collect::<Vec<InstructorInfo>>();
+
+        return Ok(user_info);
+    }
+
+    Err("Could not acquire database lock".into())
 }
 
 pub async fn add_assignment(
@@ -269,14 +356,15 @@ pub async fn get_assignment_scores(assignment_id: i32) -> Result<Vec<AssignmentG
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
-        let Ok(rows) = sqlx::query("SELECT grade, id, first_name, last_name, user_name
+        let Ok(rows) = sqlx::query(
+            "SELECT grade, id, first_name, last_name, user_name
             FROM user_assignment_grade 
             JOIN users ON users.id = user_assignment_grade.user_id
-            WHERE assignment_id = $1"
+            WHERE assignment_id = $1",
         )
-            .bind(assignment_id)
-            .fetch_all(&mut *transaction)
-            .await
+        .bind(assignment_id)
+        .fetch_all(&mut *transaction)
+        .await
         else {
             return Err(());
         };
@@ -288,7 +376,7 @@ pub async fn get_assignment_scores(assignment_id: i32) -> Result<Vec<AssignmentG
             let grade = AssignmentGrade {
                 name: format!("{} {}", f_n, l_n),
                 username: row.get("user_name"),
-                score: row.get("grade")
+                score: row.get("grade"),
             };
             assignment_grades.push(grade);
         }
@@ -394,6 +482,62 @@ pub async fn container_retrieve_grade(user_id: i32, assignment_id: i32) -> Respo
         .status(StatusCode::NOT_FOUND)
         .body("Resource not found.".into())
         .unwrap()
+}
+
+pub async fn mark_as_submitted(
+    user_id: i32,
+    assignment_id: i32,
+    zipfile: &[u8],
+) -> Result<(), String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO user_assignment_grade (user_id, assignment_id, submission_zip) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;",
+        )
+        .bind(user_id)
+        .bind(assignment_id)
+        .bind(zipfile)
+        .execute(&mut *transaction)
+        .await {
+            return Err(format!("{e}"));
+        };
+
+        transaction.commit().await.unwrap();
+    }
+    Ok(())
+}
+
+pub async fn download_submission(username: String, assignment_id: i32) -> Result<Vec<u8>, String> {
+    let postgres_pool = POSTGRES.lock().await;
+    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        let mut transaction = transaction_future.await.unwrap();
+
+        let Ok(user_row) = sqlx::query("SELECT id FROM users WHERE user_name = $1;")
+            .bind(username)
+            .fetch_one(&mut *transaction)
+            .await
+        else {
+            return Err("Bad Username".into());
+        };
+
+        let user_id: i32 = user_row.get("id");
+
+        let row = sqlx::query("SELECT submission_zip FROM user_assignment_grade WHERE user_id = $1 AND assignment_id = $2;")
+            .bind(user_id)
+            .bind(assignment_id)
+            .fetch_one(&mut *transaction)
+            .await.unwrap();
+
+        transaction.commit().await.unwrap();
+
+        let zip_file: Vec<u8> = row.get("submission_zip");
+
+        return Ok(zip_file);
+    }
+
+    return Err("Unable to acquire database lock".into());
 }
 
 pub async fn submission_in_progress(user_id: i32, assignment_id: i32) -> bool {

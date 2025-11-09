@@ -45,8 +45,22 @@ impl ContainerEntry {
     }
 }
 
-pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>) -> ! {
-    static SEMAPHORE: Semaphore = Semaphore::const_new(10);
+pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>, n_threads: Option<usize>) -> ! {
+    static SEMAPHORE: Semaphore = Semaphore::const_new(20);
+
+    if let Some(n) = n_threads {
+        let cur_n = SEMAPHORE.available_permits();
+        let diff = n as i32 - cur_n as i32;
+
+        match diff {
+            ..0 => _ = SEMAPHORE.forget_permits(-diff as usize),
+            1.. => SEMAPHORE.add_permits(diff as usize),
+            0 => ()
+        };
+    }
+
+    warn!("MAX THREADS: {}", SEMAPHORE.available_permits());
+
     loop {
         if let Ok(perm) = SEMAPHORE.acquire().await
             && let Some(container) = rx.recv().await
@@ -176,8 +190,6 @@ async fn run_container(
                 continue;
             }
         };
-
-        warn!("{container_output} :: {output}");
 
         if container_output.trim() == output.trim() {
             if test.public {

@@ -29,8 +29,6 @@ impl ImageBuilder {
             .output()
             .unwrap();
 
-        tracing::warn!("SMAY");
-
         if container.stderr.len() > 0 {
             let err_str = String::from_utf8(container.stderr)
                 .unwrap()
