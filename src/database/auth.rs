@@ -14,9 +14,7 @@ pub struct Session {
 impl Session {
     pub fn new(token: impl AsRef<[u8]>) -> Self {
         let base = BASE64_STANDARD.encode(token);
-        Self {
-            session_base: base
-        }
+        Self { session_base: base }
     }
 }
 
@@ -25,7 +23,7 @@ pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
         return Err("Invalid token format".into());
     };
     let session_hash = Sha512::digest(session_id).to_vec();
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
@@ -49,7 +47,6 @@ pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
         let now = chrono::Utc::now();
         let expiration: DateTime<Utc> = row.get("expiration");
 
-
         if now > expiration {
             return Ok(false);
         }
@@ -68,7 +65,7 @@ pub async fn session_is_student(
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
@@ -124,7 +121,7 @@ pub async fn session_is_student(
             // Ok(Some(_)) => return Ok(true),
             Ok(Some(r)) => {
                 let is_instructor: bool = r.get("is_instructor");
-                return Ok(!is_instructor);  // Invert, cause an entry was found and theyre *NOT* an instructor
+                return Ok(!is_instructor); // Invert, cause an entry was found and theyre *NOT* an instructor
             }
             Err(e) => return Err(format!("An unexpected error occured: {e}")),
         };
@@ -139,7 +136,7 @@ pub async fn session_is_instructor(
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
@@ -207,7 +204,7 @@ pub async fn session_is_admin(token: impl AsRef<[u8]>) -> Result<bool, String> {
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 

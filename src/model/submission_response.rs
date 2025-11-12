@@ -21,10 +21,10 @@ pub struct InputOutput {
 }
 
 impl SubmissionResponse {
-    pub fn pass(&mut self, test_name: impl Into<String>) {
+    pub fn pass(&mut self, test_name: Option<impl Into<String>>, was_late: bool) {
         self.tests.push(Test {
-            test_name: test_name.into(),
-            status: "PASS".into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            status: if was_late { "LATE".into() } else { "PASS".into() },
             input_output: None,
         });
         self.passes += 1;
@@ -32,14 +32,15 @@ impl SubmissionResponse {
 
     pub fn pub_pass(
         &mut self,
-        test_name: impl Into<String>,
+        test_name: Option<impl Into<String>>,
+        was_late: bool,
         input: impl Into<String>,
         expected: impl Into<String>,
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.into(),
-            status: "PASS".into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            status: if was_late { "LATE".into() } else { "PASS".into() },
             input_output: Some(InputOutput {
                 input: input.into(),
                 expected: expected.into(),
@@ -49,10 +50,10 @@ impl SubmissionResponse {
         self.passes += 1;
     }
 
-    pub fn fail(&mut self, test_name: impl Into<String>) {
+    pub fn fail(&mut self, test_name: Option<impl Into<String>>) {
         // self.tests.push((test_name.into(), TestStatus::Fail));
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "FAIL".into(),
             input_output: None,
         })
@@ -60,13 +61,13 @@ impl SubmissionResponse {
 
     pub fn pub_fail(
         &mut self,
-        test_name: impl Into<String>,
+        test_name: Option<impl Into<String>>,
         input: impl Into<String>,
         expected: impl Into<String>,
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "FAIL".into(),
             input_output: Some(InputOutput {
                 input: input.into(),
@@ -76,10 +77,10 @@ impl SubmissionResponse {
         });
     }
 
-    pub fn time_out(&mut self, test_name: impl Into<String>) {
+    pub fn time_out(&mut self, test_name: Option<impl Into<String>>) {
         // self.tests.push((test_name.into(), TestStatus::TimeOut));
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "TIMED OUT".into(),
             input_output: None,
         })
@@ -87,25 +88,24 @@ impl SubmissionResponse {
 
     pub fn pub_time_out(
         &mut self,
-        test_name: impl Into<String>,
+        test_name: Option<impl Into<String>>,
         input: impl Into<String>,
         expected: impl Into<String>,
-        found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "TIMED OUT".into(),
             input_output: Some(InputOutput {
                 input: input.into(),
                 expected: expected.into(),
-                found: found.into(),
+                found: "".into(),
             }),
         });
     }
 
-    pub fn err(&mut self, test_name: impl Into<String>) {
+    pub fn err(&mut self, test_name: Option<impl Into<String>>) {
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "ERR".into(),
             input_output: None,
         })
@@ -113,13 +113,13 @@ impl SubmissionResponse {
 
     pub fn pub_err(
         &mut self,
-        test_name: impl Into<String>,
+        test_name: Option<impl Into<String>>,
         input: impl Into<String>,
         expected: impl Into<String>,
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.into(),
+            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
             status: "ERR".into(),
             input_output: Some(InputOutput {
                 input: input.into(),

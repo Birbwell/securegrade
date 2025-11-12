@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct UserInfo {
     first_name: String,
     last_name: String,
-    username: String
+    username: String,
 }
 
 impl UserInfo {
@@ -12,8 +12,7 @@ impl UserInfo {
         Self {
             first_name,
             last_name,
-            username
+            username,
         }
     }
 }
-

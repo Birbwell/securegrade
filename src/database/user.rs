@@ -22,7 +22,7 @@ pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32
     let session_id = BASE64_STANDARD.decode(session_base).unwrap();
     let session_hash = Sha512::digest(session_id).to_vec();
 
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
 
@@ -46,7 +46,7 @@ pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> 
     let hash = create_hash(user_name, pass);
 
     {
-        let postgres_pool = POSTGRES.lock().await;
+        let postgres_pool = POSTGRES.read().await;
         if let Some(transaction) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
             let Ok(mut transaction) = transaction.await else {
                 return Err("Unable to lock database transaction".into());
@@ -93,7 +93,7 @@ pub async fn login_user(user: ClientRequest) -> Result<[u8; 16], String> {
     };
 
     let hash = create_hash(user_name, pass);
-    let postgres_pool = POSTGRES.lock().await;
+    let postgres_pool = POSTGRES.read().await;
     let mut session_id = [0u8; 16];
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let Ok(mut transaction) = transaction_future.await else {

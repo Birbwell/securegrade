@@ -1,5 +1,5 @@
 use std::{
-    fs::{copy, create_dir_all, read_dir, read_to_string, remove_dir_all},
+    fs::{copy, create_dir_all, read_dir, remove_dir_all},
     path::PathBuf,
     process::Command,
 };
@@ -8,7 +8,8 @@ use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 use crate::{
-    assignment::Assignment, database, image::ImageBuilder,
+    database::{self, assignment::Test},
+    image::ImageBuilder,
     model::submission_response::SubmissionResponse,
 };
 
@@ -25,7 +26,8 @@ use crate::{
 pub struct ContainerEntry {
     zip_file: axum::body::Bytes,
     user_id: i32,
-    assignment_id: i32,
+    task_id: i32,
+    was_late: bool,
     lang: String,
 }
 
@@ -33,19 +35,24 @@ impl ContainerEntry {
     pub fn new(
         zip_file: axum::body::Bytes,
         user_id: i32,
-        assignment_id: i32,
+        task_id: i32,
+        was_late: bool,
         lang: impl Into<String>,
     ) -> Self {
         Self {
             zip_file,
             user_id,
-            assignment_id,
+            task_id,
+            was_late,
             lang: lang.into(),
         }
     }
 }
 
-pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>, n_threads: Option<usize>) -> ! {
+pub async fn container_queue(
+    mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>,
+    n_threads: Option<usize>,
+) -> ! {
     static SEMAPHORE: Semaphore = Semaphore::const_new(20);
 
     if let Some(n) = n_threads {
@@ -55,7 +62,7 @@ pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>
         match diff {
             ..0 => _ = SEMAPHORE.forget_permits(-diff as usize),
             1.. => SEMAPHORE.add_permits(diff as usize),
-            0 => ()
+            0 => (),
         };
     }
 
@@ -67,7 +74,7 @@ pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>
         {
             tokio::spawn(async move {
                 let user_id = container.user_id;
-                let assignment_id = container.assignment_id;
+                let task_id = container.task_id;
                 let Ok(results) = run_container(container).await else {
                     drop(perm);
                     tracing::error!("Unable to run container");
@@ -80,9 +87,9 @@ pub async fn container_queue(mut rx: tokio::sync::mpsc::Receiver<ContainerEntry>
 
                 let json_results = serde_json::to_vec(&results).unwrap();
 
-                database::operations::container_add_grade(
+                database::assignment::operations::container_add_task_grade(
                     user_id,
-                    assignment_id,
+                    task_id,
                     &json_results,
                     results.score(),
                 )
@@ -99,7 +106,8 @@ async fn run_container(
     ContainerEntry {
         zip_file,
         user_id,
-        assignment_id,
+        task_id,
+        was_late,
         lang,
     }: ContainerEntry,
 ) -> Result<SubmissionResponse, String> {
@@ -109,7 +117,7 @@ async fn run_container(
         return Err("Language not supported".into());
     };
 
-    let workdir = format!("/tmp/securegrade/{}-{}", user_id, assignment_id);
+    let workdir = format!("/tmp/securegrade/{}-{}", user_id, task_id);
 
     // Delete and recreate working directory
     let _ = remove_dir_all(&workdir);
@@ -133,9 +141,10 @@ async fn run_container(
         .wait()
         .unwrap();
 
-    let assignment_dir = format!("assignments/{}", assignment_id);
-    let toml_assignment = read_to_string(format!("{}/assignment.toml", assignment_dir)).unwrap();
-    let assignment = toml::from_str::<Assignment>(&toml_assignment).unwrap();
+    let task = match database::assignment::operations::container_get_task_details(task_id).await {
+        Ok(r) => r,
+        Err(e) => return Err(e),
+    };
 
     let image = ImageBuilder::new(&workdir).build().unwrap();
     info!("Removing working directory {workdir}");
@@ -144,80 +153,62 @@ async fn run_container(
     // let mut test_results = ResponseObject::default();
     let mut test_results = SubmissionResponse::default();
 
-    for (test_name, test) in &assignment.tests {
-        let input = if let Some(input_file) = &test.input_file {
-            if test.input.is_some() {
-                warn!(
-                    "Assignment {}, {}: Both input and input_file defined. Defaulting to input_file.",
-                    assignment_id, test_name
-                );
-            }
-
-            read_to_string(format!("{}/{}", assignment_dir, input_file)).unwrap()
-        } else {
-            test.input.clone().unwrap()
-        };
-
-        let output = if let Some(output_file) = &test.output_file {
-            if test.output.is_some() {
-                warn!(
-                    "Assignment {}, {}: Both output and output_file defined. Defaulting to output_file.",
-                    assignment_id, test_name
-                );
-            }
-
-            read_to_string(format!("{}/{}", assignment_dir, output_file)).unwrap()
-        } else {
-            test.output.clone().unwrap()
-        };
-
-        let container_output = match image.exec(&input, assignment.get_timeout()).await {
+    for Test {
+        test_name,
+        input,
+        output,
+        public,
+        timeout,
+    } in &task
+    {
+        let container_output = match image.exec(&input, *timeout).await {
             Ok(Some(s)) => s,
             Ok(None) => {
-                if test.public {
-                    test_results.pub_time_out(test_name, input, output, "");
+                if *public {
+                    test_results.pub_time_out(test_name.clone(), input, output);
                 } else {
-                    test_results.time_out(test_name);
+                    test_results.time_out(test_name.clone());
                 }
                 continue;
             }
             Err(e) => {
-                if test.public {
-                    test_results.pub_err(test_name, input, output, e);
+                if *public {
+                    test_results.pub_err(test_name.clone(), input, output, e);
                 } else {
-                    test_results.err(test_name);
+                    test_results.err(test_name.clone());
                 }
                 continue;
             }
         };
 
         if container_output.trim() == output.trim() {
-            if test.public {
+            if *public {
                 test_results.pub_pass(
-                    test_name,
+                    test_name.clone(),
+                    was_late,
                     input.trim(),
                     output.trim(),
                     container_output.trim(),
                 );
             } else {
-                test_results.pass(test_name);
+                test_results.pass(test_name.clone(), was_late);
             }
         } else {
-            if test.public {
+            if *public {
                 test_results.pub_fail(
-                    test_name,
+                    test_name.clone(),
                     input.trim(),
                     output.trim(),
                     container_output.trim(),
                 );
             } else {
-                test_results.fail(test_name);
+                test_results.fail(test_name.clone());
             }
         }
     }
 
-    Ok(test_results)
     // Store test_results in database
+    Ok(test_results)
 }
 
 fn get_container_for_language(lang: impl AsRef<str>) -> Option<PathBuf> {

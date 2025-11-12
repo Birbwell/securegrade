@@ -43,9 +43,11 @@ impl ClientRequest {
 
     /// Returns (class_number, instructor_user_name)
     pub fn get_new_class(&self) -> Option<(String, String, String)> {
-        if let (Some(class_number), Some(class_description), Some(instructor_user_name)) =
-            (self.class_number.clone(), self.class_description.clone(), self.instructor_user_name.clone())
-        {
+        if let (Some(class_number), Some(class_description), Some(instructor_user_name)) = (
+            self.class_number.clone(),
+            self.class_description.clone(),
+            self.instructor_user_name.clone(),
+        ) {
             Some((class_number, class_description, instructor_user_name))
         } else {
             None

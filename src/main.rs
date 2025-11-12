@@ -11,6 +11,7 @@ use axum::middleware::{Next, from_fn};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use axum_server::tls_rustls::RustlsConfig;
+use chrono::Utc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
@@ -19,11 +20,9 @@ use crate::container::ContainerEntry;
 use crate::database::auth::{
     Session, session_exists_and_valid, session_is_admin, session_is_instructor, session_is_student,
 };
-use crate::database::operations::{container_retrieve_grade, submission_in_progress};
 use crate::model::class_info::ClassInfo;
 use crate::model::request::ClientRequest;
 
-mod assignment;
 mod container;
 mod database;
 mod image;
@@ -81,12 +80,12 @@ async fn main() {
         )
         .layer(from_fn(handle_instructor_auth)) //^^ Instructor Layer
         .route(
-            "/api/student/{class_number}/{assignment_id}/submit",
+            "/api/student/{class_number}/{assignment_id}/{task_id}/submit",
             post(handle_submission),
         )
         .route(
-            "/api/student/{class_number}/{assignment_id}/retrieve_score",
-            get(retrieve_score),
+            "/api/student/{class_number}/{assignment_id}/{task_id}/retrieve_score",
+            get(retrieve_task_score),
         )
         .route(
             "/api/student/{class_number}/{assignment_id}",
@@ -96,7 +95,6 @@ async fn main() {
         .layer(from_fn(handle_student_auth)) //^^ Student Layer
         .route("/api/get_classes", get(get_classes))
         .route("/api/list_all_students", get(list_all_students))
-        // .route("/api/validate", get(validate))
         .layer(from_fn(handle_basic_auth)) //^^ User Layer
         .route("/api/login", post(login))
         .route("/api/signup", post(signup))
@@ -386,7 +384,8 @@ async fn handle_submission(
     parts: Parts,
     zip_file: axum::body::Bytes,
 ) -> Response<Body> {
-    let [_, assignment_id] = &path_params[..] else {
+    let submission_time = Utc::now();
+    let [_, assignment_id, task_id] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Bad Request".into())
@@ -394,6 +393,7 @@ async fn handle_submission(
     };
 
     let assignment_id = assignment_id.parse::<i32>().unwrap();
+    let task_id = task_id.parse::<i32>().unwrap();
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
         return Response::builder()
@@ -403,17 +403,16 @@ async fn handle_submission(
     };
 
     let token = auth_header.to_str().unwrap().to_owned();
-
     let user_id = database::user::get_user_from_session(token).await.unwrap();
 
-    if submission_in_progress(user_id, assignment_id).await {
+    if database::assignment::operations::submission_in_progress(user_id, assignment_id).await {
         return Response::builder()
             .status(StatusCode::TOO_EARLY)
             .body("Previous submission still in queue. Check for results later.".into())
             .unwrap();
     }
 
-    if let Err(e) = database::operations::remove_old_grade(user_id, assignment_id).await {
+    if let Err(e) = database::assignment::operations::remove_old_grade(user_id, task_id).await {
         tracing::error!(e);
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -421,17 +420,26 @@ async fn handle_submission(
             .unwrap();
     }
 
-    // Mark as submission Received
-    if let Err(e) = database::operations::mark_as_submitted(user_id, assignment_id, &zip_file).await
+    let was_late = match database::assignment::operations::mark_as_submitted(
+        user_id,
+        assignment_id,
+        task_id,
+        submission_time,
+        zip_file.clone(),
+    )
+    .await
     {
-        tracing::error!(e);
-        return Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body("Internal Server Error.".into())
-            .unwrap();
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!("{e}");
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Error".into())
+                .unwrap();
+        }
     };
 
-    let container_entry = ContainerEntry::new(zip_file, user_id, assignment_id, "python313");
+    let container_entry = ContainerEntry::new(zip_file, user_id, task_id, was_late, "python");
 
     // Add to container queue
     if let Some(tx) = TX.get()
@@ -447,11 +455,11 @@ async fn handle_submission(
 
     return Response::builder()
         .status(StatusCode::OK)
-        .body("Submission Received.".into())
+        .body(OK_JSON.into())
         .unwrap();
 }
 
-async fn retrieve_score(Path(path_params): Path<Vec<String>>, parts: Parts) -> Response<Body> {
+async fn retrieve_task_score(Path(path_params): Path<Vec<String>>, parts: Parts) -> Response<Body> {
     let Some(auth_header) = parts.headers.get(AUTHORIZATION) else {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -459,7 +467,7 @@ async fn retrieve_score(Path(path_params): Path<Vec<String>>, parts: Parts) -> R
             .unwrap();
     };
 
-    let [_, assignment_id] = &path_params[..] else {
+    let [_, _, task_id] = &path_params[..] else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Invalid URL".into())
@@ -474,21 +482,40 @@ async fn retrieve_score(Path(path_params): Path<Vec<String>>, parts: Parts) -> R
             .unwrap();
     };
 
-    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+    let Ok(task_id) = task_id.parse::<i32>() else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body("Invalid URL".into())
+            .body("Invalid Request.".into())
             .unwrap();
     };
 
-    if submission_in_progress(user_id, assignment_id).await {
+    if database::assignment::operations::submission_in_progress(user_id, task_id).await {
         return Response::builder()
             .status(StatusCode::TOO_EARLY)
             .body("Submission in progress".into())
             .unwrap();
     }
 
-    return container_retrieve_grade(user_id, assignment_id).await;
+    match database::assignment::operations::get_task_score(user_id, task_id).await {
+        Ok(Some(res)) => {
+            let res_json = serde_json::to_string(&res).unwrap();
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(res_json.into())
+                .unwrap()
+        }
+        Ok(None) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("Not Found.".into())
+            .unwrap(),
+        Err(e) => {
+            tracing::error!("{e}");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Error.".into())
+                .unwrap()
+        }
+    }
 }
 
 async fn add_assignment(
@@ -502,14 +529,11 @@ async fn add_assignment(
             .unwrap();
     };
 
-    if let (Some(assignment_name), Some(assignment_description)) = (
-        client_req.assignment_name,
-        client_req.assignment_description,
-    ) {
-        if let Err(e) = database::operations::add_assignment(
+    if let Some(assignment_name) = client_req.assignment_name {
+        if let Err(e) = database::assignment::operations::add_assignment(
             class_number.into(),
             assignment_name,
-            assignment_description,
+            client_req.assignment_description,
         )
         .await
         {
@@ -539,7 +563,7 @@ async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Body> 
             .unwrap();
     };
     let assignment_id = assignment_id.parse::<i32>().unwrap();
-    let ass = database::operations::get_assignment(assignment_id)
+    let ass = database::assignment::operations::get_assignment_info(assignment_id)
         .await
         .unwrap();
 
@@ -551,13 +575,27 @@ async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Body> 
         .unwrap();
 }
 
-async fn get_class_info(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+async fn get_class_info(Path(path_params): Path<Vec<String>>, parts: Parts) -> Response<Body> {
+    let token = parts
+        .headers
+        .get("Authorization")
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    let user_id = database::user::get_user_from_session(token).await.unwrap();
+
     if let Some(class_number) = path_params.get(0) {
-        let assignments = database::operations::get_assignments(class_number)
+        let assignments = database::assignment::operations::get_assignments_for_class(
+            class_number.clone(),
+            user_id,
+        )
+        .await
+        .unwrap();
+
+        let instructors = database::operations::get_instructors(class_number)
             .await
             .unwrap();
-
-        let instructors = database::operations::get_instructors(class_number).await.unwrap();
 
         let class_info = ClassInfo::new(assignments, instructors);
 
@@ -590,7 +628,7 @@ async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<Body>
             .unwrap();
     };
 
-    let scores = database::operations::get_assignment_scores(assignment_id)
+    let scores = database::assignment::operations::get_assignment_scores(assignment_id)
         .await
         .unwrap();
 
@@ -609,8 +647,6 @@ async fn download_submission(Path(path_params): Path<Vec<String>>) -> Response<B
             .unwrap();
     };
 
-    tracing::warn!("Downloading {} :: {}", assignment_id, username);
-
     let Ok(assignment_id) = assignment_id.parse::<i32>() else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -618,9 +654,17 @@ async fn download_submission(Path(path_params): Path<Vec<String>>) -> Response<B
             .unwrap();
     };
 
-    let zip = database::operations::download_submission(username.clone(), assignment_id)
-        .await
-        .unwrap();
+    let zip =
+        database::assignment::operations::download_submission(username.clone(), assignment_id)
+            .await
+            .unwrap();
+
+    let Some(zip) = zip else {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("Nothing to download.".into())
+            .unwrap();
+    };
 
     return Response::builder()
         .status(StatusCode::OK)

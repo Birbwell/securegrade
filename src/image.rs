@@ -50,7 +50,7 @@ impl ImageBuilder {
 
 impl Image {
     /// Runs the docker container with the provided input
-    /// 
+    ///
     /// Ok(Some(output)) => Produced output \
     /// Ok(None) => Timed Out \
     /// Err(e) => Error (with message)

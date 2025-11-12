@@ -1,13 +1,25 @@
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::env::var;
 use std::sync::LazyLock;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
+pub mod assignment;
 pub mod auth;
 pub mod operations;
 pub mod user;
 
-static POSTGRES: LazyLock<Mutex<Option<Pool<Postgres>>>> = LazyLock::new(|| Mutex::new(None));
+static POSTGRES: LazyLock<RwLock<Option<Pool<Postgres>>>> = LazyLock::new(|| RwLock::new(None));
+
+#[macro_export]
+macro_rules! postgres_lock {
+    ($transaction: ident, $($body: tt)*) => {
+        let postgres_pool = POSTGRES.read().await;
+        if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+            let mut $transaction = transaction_future.await.unwrap();
+            $($body)*
+        }
+    };
+}
 
 pub async fn init_database() -> Result<(), String> {
     let Ok(name) = var("PSQL_NAME") else {
@@ -43,11 +55,6 @@ pub async fn init_database() -> Result<(), String> {
             .execute(&mut *transaction)
             .await
             .unwrap();
-
-        // sqlx::query("CREATE EXTENSION IF NOT EXISTS citext;")
-        //     .execute(&mut *transaction)
-        //     .await
-        //     .unwrap();
 
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS users (
@@ -126,13 +133,51 @@ pub async fn init_database() -> Result<(), String> {
                 id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
                 assignment_name TEXT NOT NULL,
                 assignment_description TEXT,
-                deadline TIMESTAMPTZ NOT NULL
+                deadline TIMESTAMPTZ NOT NULL,
+                visible BOOLEAN NOT NULL DEFAULT FALSE
             );",
         )
         .execute(&mut *transaction)
         .await
         {
             return Err(format!("Could not create assignment table: {e}"));
+        }
+
+        // Create task
+        // test_method = { 'stdio' | 'http:xxxx' }, where xxxx => port number
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                assignment_id INTEGER REFERENCES assignments(id),
+                task_description TEXT,
+                allow_editor BOOLEAN DEFAULT FALSE,
+                placement INTEGER NOT NULL,
+                template BYTEA,
+                test_method TEXT DEFAULT 'stdio'
+            );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("Could not create task table: {e}"));
+        }
+
+        // Create tests
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS tests (
+                id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id),
+                test_name TEXT,
+                input TEXT NOT NULL,
+                output TEXT NOT NULL,
+                public BOOLEAN NOT NULL DEFAULT FALSE,
+                timeout INTEGER
+            );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("Could not create test table: {e}"));
         }
 
         // And assignment-class associations
@@ -149,16 +194,21 @@ pub async fn init_database() -> Result<(), String> {
         }
 
         if let Err(e) = sqlx::query(
-            "CREATE TABLE IF NOT EXISTS user_assignment_grade(
+            "CREATE TABLE IF NOT EXISTS user_task_grade (
                 user_id INTEGER NOT NULL REFERENCES users(id),
+                task_id INTEGER NOT NULL REFERENCES tasks(id),
                 assignment_id INTEGER NOT NULL REFERENCES assignments(id),
                 json_results BYTEA,
+                submission_zip BYTEA,
                 grade FLOAT4,
                 error TEXT,
-                CONSTRAINT user_assignment_id_pkey PRIMARY KEY (user_id, assignment_id)
-            );"
-        ).execute(&mut *transaction)
-        .await {
+                was_late BOOLEAN,
+                CONSTRAINT user_task_id_pkey PRIMARY KEY (user_id, task_id)
+            );",
+        )
+        .execute(&mut *transaction)
+        .await
+        {
             return Err(format!("Could not create user_assignment_grade table: {e}"));
         }
 
@@ -167,11 +217,8 @@ pub async fn init_database() -> Result<(), String> {
         };
     }
 
-    let mut lock = POSTGRES.lock().await;
-
-    if lock.is_none() {
-        *lock = Some(pool);
-    }
+    let mut lock = POSTGRES.write().await;
+    *lock = Some(pool);
 
     Ok(())
 }
