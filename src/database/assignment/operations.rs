@@ -1,6 +1,7 @@
 use std::{io::Read, process::Command};
 
 use axum::body::Bytes;
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
@@ -31,7 +32,9 @@ pub async fn get_assignment_info(assignment_id: i32) -> Result<Assignment, Strin
         let assignment_desc: Option<String> = assignment_row.get("assignment_description");
         let assignment_deadline: DateTime<Utc> = assignment_row.get("deadline");
 
-        let task_rows = match sqlx::query("SELECT * FROM tasks WHERE assignment_id = $1;")
+        let task_rows = match sqlx::query("SELECT task_description, allow_editor, placement, id, supplementary_material IS NOT NULL has_material
+            FROM tasks WHERE assignment_id = $1;"
+        )
             .bind(assignment_id)
             .fetch_all(&mut *transaction)
             .await
@@ -47,12 +50,14 @@ pub async fn get_assignment_info(assignment_id: i32) -> Result<Assignment, Strin
                 let allow_editor: bool = row.get("allow_editor");
                 let placement: i32 = row.get("placement");
                 let task_id: i32 = row.get("id");
+                let has_material: bool = row.get("has_material");
 
                 Task {
                     description: task_desc,
                     task_id,
                     allow_editor,
                     placement,
+                    has_material,
                 }
             })
             .collect::<Vec<Task>>();
@@ -164,10 +169,17 @@ pub async fn add_assignment(
     class_number: String,
     assignment_name: String,
     assignment_description: Option<String>,
+    deadline: String,
+    tasks: Vec<crate::model::request::Task>,
 ) -> Result<(), String> {
     let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
+
+        let deadline_date_time: DateTime<Utc> = match deadline.parse() {
+            Ok(d) => d,
+            Err(e) => return Err(format!("Could not parse deadline: {e}")),
+        };
 
         let new_assignment_id: i32 = match sqlx::query(
             "INSERT INTO assignments (assignment_name, assignment_description, deadline)
@@ -176,7 +188,7 @@ pub async fn add_assignment(
         )
         .bind(assignment_name)
         .bind(assignment_description)
-        .bind(Utc::now())
+        .bind(deadline_date_time)
         .fetch_one(&mut *transaction)
         .await
         {
@@ -191,6 +203,62 @@ pub async fn add_assignment(
             .await
         {
             return Err(format!("{e}"));
+        }
+
+        for (placement, task) in tasks.iter().enumerate() {
+            let material = task.material_base64.as_ref().and_then(|f| {
+                base64::prelude::BASE64_STANDARD.decode(f).ok()
+            });
+
+            let new_task_id: i32 = match sqlx::query(
+                "INSERT INTO tasks (assignment_id, task_description, allow_editor, placement, template, supplementary_material, supplementary_filename, test_method)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING id;",
+            )
+            .bind(new_assignment_id)
+            .bind(&task.task_description)
+            .bind(task.allow_editor)
+            .bind(placement as i32)
+            .bind(None::<Vec<u8>>)
+            .bind(material)
+            .bind(&task.material_filename)
+            .bind("stdio")
+            .fetch_one(&mut *transaction)
+            .await
+            {
+                Ok(r) => r.get("id"),
+                Err(e) => return Err(format!("{e}")),
+            };
+
+            for test in &task.tests {
+                let input = if let Some(i_f) = &test.input_file_base64 {
+                    base64::prelude::BASE64_STANDARD.decode(i_f).and_then(|f| Ok(String::from_utf8(f).unwrap())).unwrap()
+                } else {
+                    test.input.clone().unwrap()
+                };
+
+                let output = if let Some(o_f) = &test.output_file_base64 {
+                    base64::prelude::BASE64_STANDARD.decode(o_f).and_then(|f| Ok(String::from_utf8(f).unwrap())).unwrap()
+                } else {
+                    test.output.clone().unwrap()
+                };
+
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO tests (task_id, input, output, public, timeout, test_name)
+                    VALUES ($1, $2, $3, $4, $5, $6);",
+                )
+                .bind(new_task_id)
+                .bind(input)
+                .bind(output)
+                .bind(test.is_public)
+                .bind(task.timeout.map(|f| f as i32))
+                .bind(&test.test_name)
+                .execute(&mut *transaction)
+                .await
+                {
+                    return Err(format!("{e}"));
+                }
+            }
         }
 
         transaction.commit().await.unwrap();
@@ -542,6 +610,38 @@ pub async fn download_submission(
         std::fs::remove_dir_all(&workdir).unwrap();
 
         return Ok(Some(zip_file));
+    });
+
+    Err("Failed to acquire database lock".into())
+}
+
+pub async fn download_material(
+    task_id: i32,
+) -> Result<Option<(String, String)>, String> {
+    postgres_lock!(transaction, {
+        let row = match sqlx::query(
+            "SELECT supplementary_material, supplementary_filename FROM tasks
+            WHERE id = $1;",
+        )
+        .bind(task_id)
+        .fetch_optional(&mut *transaction)
+        .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(format!("{e}")),
+        };
+
+        let material: Option<Vec<u8>> = row.get("supplementary_material");
+        let filename: String = row.get("supplementary_filename");
+
+        let material_base64 = base64::prelude::BASE64_STANDARD.encode(
+            material.as_ref().unwrap_or(&vec![]),
+        );
+
+        transaction.commit().await.unwrap();
+
+        return Ok(Some((material_base64, filename)));
     });
 
     Err("Failed to acquire database lock".into())

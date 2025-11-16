@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::OnceLock;
 
 use axum::body::Body;
-use axum::extract::Path;
+use axum::extract::{DefaultBodyLimit, Path};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::http::{HeaderName, HeaderValue, Method, Response, StatusCode};
@@ -22,6 +22,7 @@ use crate::database::auth::{
 };
 use crate::model::class_info::ClassInfo;
 use crate::model::request::ClientRequest;
+use crate::model::supplementary_material::SupplementaryMaterial;
 
 mod container;
 mod database;
@@ -41,7 +42,11 @@ async fn main() {
 
     let cors = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+        .allow_headers([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            HeaderName::from_lowercase(b"language").unwrap(),
+        ])
         .allow_origin(AllowOrigin::any())
         .expose_headers([
             CONTENT_TYPE,
@@ -71,6 +76,10 @@ async fn main() {
         )
         // .route("/api/update_assignment", put(update_assignment))
         .route(
+            "/api/instructor/{class_number}/generate_join_code",
+            get(generate_join_code),
+        )
+        .route(
             "/api/instructor/{class_number}/add_student",
             put(add_student),
         )
@@ -79,6 +88,10 @@ async fn main() {
             get(list_all_students),
         )
         .layer(from_fn(handle_instructor_auth)) //^^ Instructor Layer
+        .route(
+            "/api/student/{class_number}/{assignment_id}/{task_id}/download_material",
+            get(download_material),
+        )
         .route(
             "/api/student/{class_number}/{assignment_id}/{task_id}/submit",
             post(handle_submission),
@@ -93,12 +106,15 @@ async fn main() {
         )
         .route("/api/student/{class_number}", get(get_class_info))
         .layer(from_fn(handle_student_auth)) //^^ Student Layer
+        .route("/api/join_class", put(join_class))
         .route("/api/get_classes", get(get_classes))
         .route("/api/list_all_students", get(list_all_students))
+        .route("/api/get_supported_languages", get(supported_languages))
         .layer(from_fn(handle_basic_auth)) //^^ User Layer
         .route("/api/login", post(login))
         .route("/api/signup", post(signup))
-        .layer(cors);
+        .layer(cors)
+        .layer(DefaultBodyLimit::max(usize::MAX));
 
     let config =
         RustlsConfig::from_pem_file("aeskul.net_certificate.cer", "aeskul.net_private_key.key")
@@ -398,7 +414,18 @@ async fn handle_submission(
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
-            .body(Body::new("Not Authorized".to_string()))
+            .body("Not Authorized".into())
+            .unwrap();
+    };
+
+    let Some(lang) = parts
+        .headers
+        .get("Language")
+        .and_then(|f| f.to_str().and_then(|f| Ok(f.to_owned())).ok())
+    else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Language Header Missing".into())
             .unwrap();
     };
 
@@ -439,7 +466,7 @@ async fn handle_submission(
         }
     };
 
-    let container_entry = ContainerEntry::new(zip_file, user_id, task_id, was_late, "python");
+    let container_entry = ContainerEntry::new(zip_file, user_id, task_id, was_late, lang);
 
     // Add to container queue
     if let Some(tx) = TX.get()
@@ -529,29 +556,39 @@ async fn add_assignment(
             .unwrap();
     };
 
-    if let Some(assignment_name) = client_req.assignment_name {
-        if let Err(e) = database::assignment::operations::add_assignment(
-            class_number.into(),
-            assignment_name,
-            client_req.assignment_description,
-        )
-        .await
-        {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(e.into())
-                .unwrap();
-        };
-
+    let ClientRequest {
+        assignment_name: Some(assignment_name),
+        assignment_description,
+        deadline: Some(deadline),
+        tasks: Some(tasks),
+        ..
+    } = client_req
+    else {
         return Response::builder()
-            .status(StatusCode::OK)
-            .body("OK".into())
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid Request.".into())
             .unwrap();
-    }
+    };
+
+    if let Err(e) = database::assignment::operations::add_assignment(
+        class_number.into(),
+        assignment_name,
+        assignment_description,
+        deadline,
+        tasks,
+    )
+    .await
+    {
+        tracing::error!("Could not add assignment: {e}");
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Error.".into())
+            .unwrap();
+    };
 
     Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body("Resource not Found".into())
+        .status(StatusCode::OK)
+        .body(OK_JSON.into())
         .unwrap()
 }
 
@@ -673,6 +710,57 @@ async fn download_submission(Path(path_params): Path<Vec<String>>) -> Response<B
         .unwrap();
 }
 
+async fn download_material(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+    let [_, _, task_id] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    let Ok(task_id) = task_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    let material = database::assignment::operations::download_material(task_id)
+        .await
+        .unwrap();
+
+    let Some((material, filename)) = material else {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("No material found.".into())
+            .unwrap();
+    };
+
+    let material_resp = SupplementaryMaterial { material, filename };
+    let material_resp_json = serde_json::to_string(&material_resp).unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(material_resp_json.into())
+        .unwrap();
+}
+
+async fn generate_join_code(Path(class_number): Path<String>) -> Response<Body> {
+    let join_code = rand::random_iter::<u8>()
+        .take(6)
+        .map(|b| format!("{:X}", b % 16))
+        .collect::<String>();
+
+    database::operations::add_join_code(join_code.clone(), class_number)
+        .await
+        .unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(format!(r#"{{ "join_code": "{join_code}" }}"#).into())
+        .unwrap();
+}
+
 async fn get_classes(parts: Parts) -> Response<Body> {
     let auth_header = parts.headers.get(&AUTHORIZATION).unwrap().to_str().unwrap();
     let user_id = database::user::get_user_from_session(auth_header)
@@ -778,4 +866,68 @@ async fn signup(Json(signup_req): Json<ClientRequest>) -> Response<Body> {
                 .unwrap()
         }
     }
+}
+
+async fn join_class(parts: Parts, Json(client_req): Json<ClientRequest>) -> Response<Body> {
+    let ClientRequest {
+        join_code: Some(join_code),
+        ..
+    } = client_req
+    else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    let join_code = join_code.to_uppercase();
+
+    let session_base = parts
+        .headers
+        .get(&AUTHORIZATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    let user_id = database::user::get_user_from_session(session_base).await.unwrap();
+
+    match database::operations::join_class(user_id, join_code).await {
+        Ok(true) => Response::builder()
+            .status(StatusCode::OK)
+            .body(OK_JSON.into())
+            .unwrap(),
+        Ok(false) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body("Invalid Join Code.".into())
+            .unwrap(),
+        Err(e) => {
+            tracing::error!("{e}");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal Server Error.".into())
+                .unwrap()
+        }
+    }
+}
+
+async fn supported_languages() -> Response<Body> {
+    let Ok(dir) = std::fs::read_dir("dockerfiles") else {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Server Error.".into())
+            .unwrap();
+    };
+
+    let items = dir
+        .filter_map(|f| f.ok())
+        .filter_map(|f| f.file_name().into_string().ok())
+        .collect::<Vec<String>>();
+
+    let item_json = serde_json::to_string(&items).unwrap();
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(item_json.into())
+        .unwrap();
 }

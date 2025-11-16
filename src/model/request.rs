@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Test {
+    pub test_name: Option<String>,
+    pub is_public: bool,
+    pub input: Option<String>,
+    pub output: Option<String>,
+    pub input_file_base64: Option<String>,
+    pub output_file_base64: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Task {
+    pub task_description: String,
+    pub allow_editor: bool,
+    pub material_base64: Option<String>,
+    pub material_filename: Option<String>,
+    pub timeout: Option<u32>,
+    pub tests: Vec<Test>
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClientRequest {
     // Login
@@ -23,12 +43,16 @@ pub struct ClientRequest {
     // New Assignment
     pub assignment_name: Option<String>,
     pub assignment_description: Option<String>,
+    pub deadline: Option<String>,
+    pub tasks: Option<Vec<Task>>,
 
     // Submission
     pub assignment_id: Option<u32>,
     pub lang: Option<String>,
-    // pub files: Vec<FileObject>,
     pub zip_file: Option<Vec<u8>>,
+
+    // Join Class
+    pub join_code: Option<String>,
 }
 
 impl ClientRequest {

@@ -39,6 +39,7 @@ struct Task {
     task_id: i32,
     placement: i32,
     allow_editor: bool,
+    has_material: bool,
 }
 
 #[derive(Debug)]

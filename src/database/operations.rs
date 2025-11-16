@@ -3,6 +3,7 @@ use crate::model::class_item::ClassItem;
 use crate::model::class_info::InstructorInfo;
 use crate::model::request::ClientRequest;
 use crate::model::user_info::UserInfo;
+use crate::postgres_lock;
 
 use sqlx::Row;
 
@@ -228,4 +229,60 @@ pub async fn get_instructors(class_number: impl Into<String>) -> Result<Vec<Inst
     }
 
     Err("Could not acquire database lock".into())
+}
+
+pub async fn add_join_code(join_code: String, class_number: String) -> Result<(), String> {
+    postgres_lock!(transaction, {
+        sqlx::query("INSERT INTO class_join_code (join_code, class_number, expiration)
+        VALUES ($1, $2, NOW() + INTERVAL '1 hour')
+        ON CONFLICT (join_code) DO UPDATE SET
+            class_number = EXCLUDED.class_number,
+            expiration = EXCLUDED.expiration;")
+            .bind(join_code)
+            .bind(class_number)
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+
+        transaction.commit().await.unwrap();
+        return Ok(());
+    });
+
+    return Err("Failed to acquire transaction lock".into());
+}
+
+pub async fn join_class(user_id: i32, join_code: String) -> Result<bool, String> {
+    postgres_lock!(transaction, {
+        let row = match sqlx::query("SELECT class_number FROM class_join_code WHERE join_code = $1 AND expiration > NOW();")
+            .bind(join_code)
+            .fetch_one(&mut *transaction)
+            .await
+        {
+            Ok(r) => r,
+            Err(sqlx::Error::RowNotFound) => {
+                return Ok(false);
+            }
+            Err(e) => {
+                return Err(format!("Database error: {e}"));
+            }
+        };
+
+        let class_number: String = row.get("class_number");
+
+        if let Err(e) = sqlx::query(
+            "INSERT INTO user_class (user_id, class_number, is_instructor)
+            VALUES ($1, $2, FALSE);",
+        )
+        .bind(user_id)
+        .bind(&class_number)
+        .execute(&mut *transaction)
+        .await {
+            return Err(format!("Unable to add to user_class table: {e}"));
+        }
+
+        transaction.commit().await.unwrap();
+        return Ok(true);
+    });
+
+    return Err("Failed to acquire transaction lock".into());
 }

@@ -88,8 +88,8 @@ pub async fn init_database() -> Result<(), String> {
         // Create a table for the user-class associations
         if let Err(e) = sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS user_class (
-            user_id INTEGER REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
-            class_number TEXT REFERENCES classes (class_number) ON UPDATE CASCADE ON DELETE CASCADE,
+            user_id INTEGER REFERENCES users (id),
+            class_number TEXT REFERENCES classes (class_number),
             is_instructor BOOLEAN NOT NULL,
             CONSTRAINT student_class_pkey PRIMARY KEY (user_id, class_number)
         );"#,
@@ -153,6 +153,8 @@ pub async fn init_database() -> Result<(), String> {
                 allow_editor BOOLEAN DEFAULT FALSE,
                 placement INTEGER NOT NULL,
                 template BYTEA,
+                supplementary_material BYTEA,
+                supplementary_filename TEXT,
                 test_method TEXT DEFAULT 'stdio'
             );",
         )
@@ -210,6 +212,17 @@ pub async fn init_database() -> Result<(), String> {
         .await
         {
             return Err(format!("Could not create user_assignment_grade table: {e}"));
+        }
+
+        if let Err(e) = sqlx::query(
+            "CREATE TABLE IF NOT EXISTS class_join_code (
+                join_code TEXT PRIMARY KEY,
+                class_number TEXT REFERENCES classes (class_number),
+                expiration TIMESTAMPTZ NOT NULL
+            );"
+        ).execute(&mut *transaction)
+        .await {
+            return Err(format!("Could not create class_join_code table: {e}"));
         }
 
         if let Err(e) = transaction.commit().await {
