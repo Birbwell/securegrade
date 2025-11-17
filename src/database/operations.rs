@@ -1,20 +1,20 @@
+//! Contains uncategorized database operations (TODO: Refactor them later)
+
 use crate::database::POSTGRES;
-use crate::model::class_item::ClassItem;
 use crate::model::class_info::InstructorInfo;
+use crate::model::class_item::ClassItem;
 use crate::model::request::ClientRequest;
 use crate::model::user_info::UserInfo;
 use crate::postgres_lock;
 
 use sqlx::Row;
 
+/// Creates a new, blank class with one instructor
 pub async fn new_class(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, class_description, instructor_user_name)) = obj.get_new_class() else {
         return Err("Missing fields class_number or instructor_user_name".into());
     };
-
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
+    postgres_lock!(transaction, {
         if let Err(e) =
             sqlx::query("INSERT INTO classes (class_number, class_description) VALUES ($1, $2);")
                 .bind(&class_number)
@@ -49,10 +49,11 @@ pub async fn new_class(obj: ClientRequest) -> Result<(), String> {
         };
 
         transaction.commit().await.unwrap();
-    }
+    });
     Ok(())
 }
 
+/// Manually adds a new student to an existing class
 pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, student_user_name)) = obj.get_new_student() else {
         return Err("Missing fields class_number or student_user_name".into());
@@ -80,6 +81,7 @@ pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
     Ok(())
 }
 
+/// Lists all users registered on the platform. Excludes users from a class, should a class number be provided.
 pub async fn list_all_students(
     exclude_from_class: Option<String>,
 ) -> Result<Vec<UserInfo>, String> {
@@ -132,6 +134,7 @@ pub async fn list_all_students(
     }
 }
 
+/// Adds an instructor to a class
 pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
     let Some((class_number, instructor_user_name)) = obj.get_new_instructor() else {
         return Err("Missing fields class_number or student_user_name".into());
@@ -159,6 +162,7 @@ pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
     Ok(())
 }
 
+/// Gets list of classes that a given user is associated with (either as a student or as an instructor).
 pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
     let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
@@ -197,7 +201,10 @@ pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
     Err("Server Error".into())
 }
 
-pub async fn get_instructors(class_number: impl Into<String>) -> Result<Vec<InstructorInfo>, String> {
+/// Gets list of instructors for a given class
+pub async fn get_instructors(
+    class_number: impl Into<String>,
+) -> Result<Vec<InstructorInfo>, String> {
     let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
         let mut transaction = transaction_future.await.unwrap();
@@ -218,12 +225,15 @@ pub async fn get_instructors(class_number: impl Into<String>) -> Result<Vec<Inst
 
         transaction.commit().await.unwrap();
 
-        let user_info = rows.iter().map(|f| {
-            let last_name: String = f.get("last_name");
-            let first_name: String = f.get("first_name");
-            let email: String = f.get("email");
-            InstructorInfo::new(first_name, last_name, email)
-        }).collect::<Vec<InstructorInfo>>();
+        let user_info = rows
+            .iter()
+            .map(|f| {
+                let last_name: String = f.get("last_name");
+                let first_name: String = f.get("first_name");
+                let email: String = f.get("email");
+                InstructorInfo::new(first_name, last_name, email)
+            })
+            .collect::<Vec<InstructorInfo>>();
 
         return Ok(user_info);
     }
@@ -231,18 +241,21 @@ pub async fn get_instructors(class_number: impl Into<String>) -> Result<Vec<Inst
     Err("Could not acquire database lock".into())
 }
 
+/// Adds a join code to the `class_join_code` table.
 pub async fn add_join_code(join_code: String, class_number: String) -> Result<(), String> {
     postgres_lock!(transaction, {
-        sqlx::query("INSERT INTO class_join_code (join_code, class_number, expiration)
+        sqlx::query(
+            "INSERT INTO class_join_code (join_code, class_number, expiration)
         VALUES ($1, $2, NOW() + INTERVAL '1 hour')
         ON CONFLICT (join_code) DO UPDATE SET
             class_number = EXCLUDED.class_number,
-            expiration = EXCLUDED.expiration;")
-            .bind(join_code)
-            .bind(class_number)
-            .execute(&mut *transaction)
-            .await
-            .unwrap();
+            expiration = EXCLUDED.expiration;",
+        )
+        .bind(join_code)
+        .bind(class_number)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
 
         transaction.commit().await.unwrap();
         return Ok(());
@@ -251,12 +264,15 @@ pub async fn add_join_code(join_code: String, class_number: String) -> Result<()
     return Err("Failed to acquire transaction lock".into());
 }
 
+/// Adds the provided user_id to a class should there be an unexpired join_code associated with a class
 pub async fn join_class(user_id: i32, join_code: String) -> Result<bool, String> {
     postgres_lock!(transaction, {
-        let row = match sqlx::query("SELECT class_number FROM class_join_code WHERE join_code = $1 AND expiration > NOW();")
-            .bind(join_code)
-            .fetch_one(&mut *transaction)
-            .await
+        let row = match sqlx::query(
+            "SELECT class_number FROM class_join_code WHERE join_code = $1 AND expiration > NOW();",
+        )
+        .bind(join_code)
+        .fetch_one(&mut *transaction)
+        .await
         {
             Ok(r) => r,
             Err(sqlx::Error::RowNotFound) => {
@@ -276,7 +292,8 @@ pub async fn join_class(user_id: i32, join_code: String) -> Result<bool, String>
         .bind(user_id)
         .bind(&class_number)
         .execute(&mut *transaction)
-        .await {
+        .await
+        {
             return Err(format!("Unable to add to user_class table: {e}"));
         }
 

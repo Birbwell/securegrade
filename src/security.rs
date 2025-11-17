@@ -1,3 +1,5 @@
+//! Contains the middleware security functions. Each layer checks for a different level of security, as denoted by the function
+
 use axum::{
     body::Body,
     extract::Path,
@@ -10,6 +12,7 @@ use crate::database::auth::{
     session_exists_and_valid, session_is_admin, session_is_instructor, session_is_student,
 };
 
+/// Checks to see if the user is authenticated.
 pub async fn handle_basic_auth(
     Path(path_params): Path<Vec<String>>,
     request: axum::http::Request<Body>,
@@ -80,6 +83,8 @@ pub async fn handle_basic_auth(
     }
 }
 
+/// Checks if the user is a authorized as a student (or an instructor) for the provided class.
+/// If no class parameter is provided, fall through (for admin-related endpoints).
 pub async fn handle_student_auth(
     Path(path_params): Path<Vec<String>>,
     request: axum::http::Request<Body>,
@@ -157,6 +162,8 @@ pub async fn handle_student_auth(
     }
 }
 
+/// Check if the user is authorized as an instructor for the class.
+/// If no class number is provided, fall through (for admin-related endpoints).
 pub async fn handle_instructor_auth(
     path_params: Path<Vec<String>>,
     request: axum::http::Request<Body>,
@@ -222,6 +229,7 @@ pub async fn handle_instructor_auth(
     }
 }
 
+/// Check if the user is authorized as an admin.
 pub async fn handle_admin_auth(request: axum::http::Request<Body>, next: Next) -> Response<Body> {
     let Some(auth_header) = request.headers().get(&AUTHORIZATION) else {
         return Response::builder()

@@ -1,3 +1,5 @@
+//! Contains database operations associated with authentication and authorization
+
 use base64::{Engine, prelude::BASE64_STANDARD};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ impl Session {
     }
 }
 
+/// Checks if a session token provided by a user matches that of a valid session token
 pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
     let Ok(session_id) = BASE64_STANDARD.decode(token) else {
         return Err("Invalid token format".into());
@@ -58,6 +61,7 @@ pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
     Ok(false)
 }
 
+/// Checks if the session token provided matches that of a user who is a student of the provided class number.
 pub async fn session_is_student(
     class_number: String,
     token: impl AsRef<[u8]>,
@@ -95,6 +99,7 @@ pub async fn session_is_student(
 
         let user_id: i32 = row.get("user_id");
 
+        // UNCOMMENT IF YOU WANT ADMINS TO HAVE STUDENT PERMS
         // let Ok(row) = sqlx::query("SELECT is_admin FROM users WHERE id = $1;")
         //     .bind(user_id)
         //     .fetch_one(&mut *transaction)
@@ -103,7 +108,6 @@ pub async fn session_is_student(
         //     return Err(format!("User ID missing from users table: {user_id}"));
         // };
 
-        // UNCOMMENT IF YOU WANT ADMINS TO HAVE STUDENT PERMS
         // let is_admin: bool = row.get("is_admin");
         // if is_admin {
         //     return Ok(true);
@@ -118,7 +122,6 @@ pub async fn session_is_student(
         .await
         {
             Ok(None) => return Ok(false),
-            // Ok(Some(_)) => return Ok(true),
             Ok(Some(r)) => {
                 let is_instructor: bool = r.get("is_instructor");
                 return Ok(!is_instructor); // Invert, cause an entry was found and theyre *NOT* an instructor
@@ -126,9 +129,11 @@ pub async fn session_is_student(
             Err(e) => return Err(format!("An unexpected error occured: {e}")),
         };
     }
-    Ok(false)
+    Ok(false)            // Ok(Some(_)) => return Ok(true),
+
 }
 
+/// Checks if the session token provided matches that of a user who is an instructor of the provided class number.
 pub async fn session_is_instructor(
     class_number: String,
     token: impl AsRef<[u8]>,
@@ -200,6 +205,7 @@ pub async fn session_is_instructor(
     Ok(false)
 }
 
+/// Checks if a session_token matches that of a user who is an admin
 pub async fn session_is_admin(token: impl AsRef<[u8]>) -> Result<bool, String> {
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();

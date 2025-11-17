@@ -1,3 +1,13 @@
+//! Contains all functions associated with accessing the database
+//! 
+//! Functions are grouped into submodules depending on what the operation affects. For example, operations primarily affecting the `users` table will be in the `users` module.
+//! 
+//! Submodules are:
+//! - assignment
+//! - auth
+//! - user
+//! - operations (for generic operations, will be refactored out)
+
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::env::var;
 use std::sync::LazyLock;
@@ -10,6 +20,15 @@ pub mod user;
 
 static POSTGRES: LazyLock<RwLock<Option<Pool<Postgres>>>> = LazyLock::new(|| RwLock::new(None));
 
+/// Simplifies the syntax of acquiring the postgres lock, so to avoid reusing the same unnecessarily complex lines of code.
+/// 
+/// Acquires the postgres lock, assigns it to the identifier provided in the first parameter, then executes the block provided in the second parameter.
+/// 
+/// ```
+/// postgres_lock(transaction, {
+///     let user_rows = sqlx::query("SELECT * FROM users;").fetch_all(&mut *transaction).await.unwrap();
+/// });
+/// ```
 #[macro_export]
 macro_rules! postgres_lock {
     ($transaction: ident, $($body: tt)*) => {

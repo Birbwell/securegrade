@@ -6,6 +6,7 @@ use crate::model::request::ClientRequest;
 
 use super::POSTGRES;
 
+/// Generates a hash using the provided username and password. This is then compared/stored in the database, instead of storing the plaintext password.
 fn create_hash(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Vec<u8> {
     let user_name = user_name.into();
     let pass = pass.into();
@@ -18,6 +19,9 @@ fn create_hash(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Vec<u
     Sha512::digest(secret_sauce).to_vec()
 }
 
+/// Provided a session token, retrieve the user_id of the associated user.
+/// 
+/// This allows all operations to be associated with the user, eliminating the risk of someone acting on someone else's behalf (by, for example, providing a different user id than their own).
 pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32> {
     let session_id = BASE64_STANDARD.decode(session_base).unwrap();
     let session_hash = Sha512::digest(session_id).to_vec();
@@ -38,6 +42,7 @@ pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32
     None
 }
 
+/// Registers a new user provided their credentials.
 pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = new_user.get_login() else {
         return Err(format!("Missing fields user_name or pass in request"));
@@ -87,6 +92,7 @@ pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> 
     Ok(login_user(new_user).await?)
 }
 
+/// Logins a user provided their credentials.
 pub async fn login_user(user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = user.get_login() else {
         return Err(format!("Missing fields user_name or pass"));

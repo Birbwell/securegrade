@@ -1,3 +1,7 @@
+//! Contains all endpoint-associated function. These are grouped depending on the security level required to access them
+//! 
+//! The endpoints requiring no authentication and no authorization are here, and the endpoints requiring higher levels of authorization are in the `student`, `instructor`, and `admin` submodules respectively.
+
 use axum::{
     Json,
     body::Body,
