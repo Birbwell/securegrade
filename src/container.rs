@@ -9,9 +9,12 @@ use tracing::{error, info, warn};
 
 use crate::{
     database::{self, assignment::Test},
-    image::ImageBuilder,
     model::submission_response::SubmissionResponse,
 };
+
+use image::ImageBuilder;
+
+mod image;
 
 // Supported Languages
 // pub enum Language {

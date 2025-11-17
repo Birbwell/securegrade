@@ -19,7 +19,6 @@ use crate::model::supplementary_material::SupplementaryMaterial;
 mod container;
 mod database;
 mod endpoints;
-mod image;
 mod model;
 mod security;
 
