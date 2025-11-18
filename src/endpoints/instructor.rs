@@ -1,4 +1,9 @@
-use axum::{Json, body::Body, extract::Path, http::{Response, StatusCode, header::CONTENT_TYPE}};
+use axum::{
+    Json,
+    body::Body,
+    extract::Path,
+    http::{Response, StatusCode, header::CONTENT_TYPE},
+};
 
 use crate::{OK_JSON, database, model::request::ClientRequest};
 
@@ -32,10 +37,9 @@ pub async fn download_submission(Path(path_params): Path<Vec<String>>) -> Respon
             .unwrap();
     };
 
-    let zip =
-        database::assignment::download_submission(username.clone(), assignment_id)
-            .await
-            .unwrap();
+    let zip = database::assignment::download_submission(username.clone(), assignment_id)
+        .await
+        .unwrap();
 
     let Some(zip) = zip else {
         return Response::builder()
@@ -108,6 +112,39 @@ pub async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<B
         .unwrap();
 }
 
+pub async fn retrieve_full_assignment_info(Path(path_params): Path<Vec<String>>) -> Response<Body> {
+    let [_, assignment_id, ..] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid URL parameters.".into())
+            .unwrap();
+    };
+
+    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid URL parameters.".into())
+            .unwrap();
+    };
+
+    let full_assignment_info =
+        match database::assignment::retrieve_full_assignment_info(assignment_id).await {
+            Ok(fai) => serde_json::to_string(&fai).unwrap(),
+            Err(e) => {
+                tracing::error!(e);
+                return Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body("Internal Error".into())
+                    .unwrap();
+            }
+        };
+
+    return Response::builder()
+        .status(StatusCode::OK)
+        .body(full_assignment_info.into())
+        .unwrap();
+}
+
 pub async fn add_assignment(
     Path(path_params): Path<Vec<String>>,
     Json(client_req): Json<ClientRequest>,
@@ -129,7 +166,7 @@ pub async fn add_assignment(
     else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body("Invalid Request.".into())
+            .body("Missing required fields assignment_name or deadline.".into())
             .unwrap();
     };
 
@@ -143,6 +180,59 @@ pub async fn add_assignment(
     .await
     {
         tracing::error!("Could not add assignment: {e}");
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("Internal Error.".into())
+            .unwrap();
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(OK_JSON.into())
+        .unwrap()
+}
+
+pub async fn update_assignment(
+    Path(path_params): Path<Vec<String>>,
+    Json(client_req): Json<ClientRequest>,
+) -> Response<Body> {
+    let [_, assignment_id, ..] = &path_params[..] else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Missing assignment_id URL parameter.".into())
+            .unwrap();
+    };
+
+    let Ok(assignment_id) = assignment_id.parse::<i32>() else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Invalid assignment_id parameter.".into())
+            .unwrap();
+    };
+
+    let ClientRequest {
+        assignment_name: Some(assignment_name),
+        assignment_description,
+        deadline: Some(deadline),
+        tasks: Some(tasks),
+        ..
+    } = client_req
+    else {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Bad Request.".into())
+            .unwrap();
+    };
+
+    if let Err(e) = database::assignment::update_assignment(
+        assignment_id,
+        assignment_name,
+        assignment_description,
+        deadline,
+        tasks,
+    )
+    .await {
+        tracing::error!(e);
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body("Internal Error.".into())

@@ -1,6 +1,14 @@
 use std::time::Duration;
+use std::{io::Read, process::Command};
 
+use crate::model::request::Task as ReqTask;
+use crate::model::request::Test as ReqTest;
+
+use axum::body::Bytes;
+use base64::Engine;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
+use sqlx::Row;
 
 #[derive(Serialize)]
 enum Method {
@@ -49,17 +57,15 @@ pub struct Test {
     pub timeout: Option<Duration>,
 }
 
-use std::{io::Read, process::Command};
-
-use axum::body::Bytes;
-use base64::Engine;
-use chrono::{DateTime, Utc};
-use sqlx::Row;
+#[derive(Serialize)]
+pub struct FullAssignmentInfo {
+    assignment_name: String,
+    deadline: String,
+    tasks: Vec<ReqTask>,
+}
 
 use crate::{
-    database::{
-        POSTGRES,
-    },
+    database::POSTGRES,
     model::{
         assignment_grade::AssignmentGrade, class_info::AssignmentInfo,
         submission_response::SubmissionResponse,
@@ -173,7 +179,7 @@ pub async fn get_assignments_for_class(
             "SELECT a.id, a.assignment_name, a.assignment_description, a.deadline
             FROM assignments a
             JOIN assignment_class c ON c.assignment_id = a.id
-            WHERE c.class_number = $1;"
+            WHERE c.class_number = $1;",
         )
         .bind(class_number)
         .fetch_all(&mut *transaction)
@@ -215,12 +221,106 @@ pub async fn get_assignments_for_class(
     Err("Failed to acquire database lock".into())
 }
 
+pub async fn retrieve_full_assignment_info(
+    assignment_id: i32,
+) -> Result<FullAssignmentInfo, String> {
+    postgres_lock!(transaction, {
+        let assignment_row = match sqlx::query(
+            "SELECT * FROM assignments
+            WHERE id = $1;",
+        )
+        .bind(assignment_id)
+        .fetch_one(&mut *transaction)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(format!("{e}")),
+        };
+
+        let deadline: DateTime<Utc> = assignment_row.get("deadline");
+        let assignment_name: String = assignment_row.get("assignment_name");
+
+        let task_rows = match sqlx::query(
+            "SELECT * FROM tasks
+            WHERE assignment_id = $1
+            ORDER BY placement ASC;",
+        )
+        .bind(assignment_id)
+        .fetch_all(&mut *transaction)
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(format!("{e}")),
+        };
+
+        let mut tasks = vec![];
+        for task in task_rows {
+            let task_id: i32 = task.get("id");
+            let timeout = None::<i32>;
+            let material_vec: Option<Vec<u8>> = task.get("supplementary_material");
+
+            let material_base64 =
+                material_vec.and_then(|f| Some(base64::prelude::BASE64_STANDARD.encode(f)));
+
+            let test_rows = match sqlx::query(
+                "SELECT * FROM tests
+                WHERE task_id = $1;",
+            )
+            .bind(task_id)
+            .fetch_all(&mut *transaction)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => return Err(format!("{e}")),
+            };
+
+            let tests = test_rows
+                .iter()
+                .map(|test| {
+                    let test_name: Option<String> = test.get("test_name");
+                    let input: String = test.get("input");
+                    let output: String = test.get("output");
+                    let is_public: bool = test.get("public");
+
+                    ReqTest {
+                        test_name,
+                        is_public,
+                        input: Some(input),
+                        output: Some(output),
+                        input_file_base64: None,
+                        output_file_base64: None,
+                    }
+                })
+                .collect::<Vec<ReqTest>>();
+
+            tasks.push(ReqTask {
+                task_description: task.get("task_description"),
+                allow_editor: task.get("allow_editor"),
+                material_base64,
+                material_filename: task.get("supplementary_filename"),
+                timeout,
+                tests,
+            });
+        }
+
+        let fai = FullAssignmentInfo {
+            assignment_name,
+            deadline: deadline.to_string(),
+            tasks,
+        };
+
+        return Ok(fai);
+    });
+
+    Err("Failed to acquire database lock".into())
+}
+
 pub async fn add_assignment(
     class_number: String,
     assignment_name: String,
     assignment_description: Option<String>,
     deadline: String,
-    tasks: Vec<crate::model::request::Task>,
+    tasks: Vec<ReqTask>,
 ) -> Result<(), String> {
     let postgres_pool = POSTGRES.read().await;
     if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
@@ -256,9 +356,10 @@ pub async fn add_assignment(
         }
 
         for (placement, task) in tasks.iter().enumerate() {
-            let material = task.material_base64.as_ref().and_then(|f| {
-                base64::prelude::BASE64_STANDARD.decode(f).ok()
-            });
+            let material = task
+                .material_base64
+                .as_ref()
+                .and_then(|f| base64::prelude::BASE64_STANDARD.decode(f).ok());
 
             let new_task_id: i32 = match sqlx::query(
                 "INSERT INTO tasks (assignment_id, task_description, allow_editor, placement, template, supplementary_material, supplementary_filename, test_method)
@@ -282,13 +383,19 @@ pub async fn add_assignment(
 
             for test in &task.tests {
                 let input = if let Some(i_f) = &test.input_file_base64 {
-                    base64::prelude::BASE64_STANDARD.decode(i_f).and_then(|f| Ok(String::from_utf8(f).unwrap())).unwrap()
+                    base64::prelude::BASE64_STANDARD
+                        .decode(i_f)
+                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .unwrap()
                 } else {
                     test.input.clone().unwrap()
                 };
 
                 let output = if let Some(o_f) = &test.output_file_base64 {
-                    base64::prelude::BASE64_STANDARD.decode(o_f).and_then(|f| Ok(String::from_utf8(f).unwrap())).unwrap()
+                    base64::prelude::BASE64_STANDARD
+                        .decode(o_f)
+                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .unwrap()
                 } else {
                     test.output.clone().unwrap()
                 };
@@ -665,9 +772,7 @@ pub async fn download_submission(
     Err("Failed to acquire database lock".into())
 }
 
-pub async fn download_material(
-    task_id: i32,
-) -> Result<Option<(String, String)>, String> {
+pub async fn download_material(task_id: i32) -> Result<Option<(String, String)>, String> {
     postgres_lock!(transaction, {
         let row = match sqlx::query(
             "SELECT supplementary_material, supplementary_filename FROM tasks
@@ -685,9 +790,8 @@ pub async fn download_material(
         let material: Option<Vec<u8>> = row.get("supplementary_material");
         let filename: String = row.get("supplementary_filename");
 
-        let material_base64 = base64::prelude::BASE64_STANDARD.encode(
-            material.as_ref().unwrap_or(&vec![]),
-        );
+        let material_base64 =
+            base64::prelude::BASE64_STANDARD.encode(material.as_ref().unwrap_or(&vec![]));
 
         transaction.commit().await.unwrap();
 
@@ -731,3 +835,126 @@ pub async fn remove_old_grade(user_id: i32, task_id: i32) -> Result<(), String> 
     return Err("Failed to acquire transaction lock".into());
 }
 
+pub async fn update_assignment(
+    assignment_id: i32,
+    assignment_name: String,
+    assignment_description: Option<String>,
+    deadline: String,
+    tasks: Vec<ReqTask>,
+) -> Result<(), String> {
+    postgres_lock!(transaction, {
+        let Ok(deadline) = deadline.parse::<DateTime<Utc>>() else {
+            return Err("Invalid deadline date string.".into());
+        };
+
+        if let Err(e) = sqlx::query(
+            "UPDATE assignments
+            SET assignment_name = $1, assignment_description = $2, deadline = $3
+            WHERE id = $4;",
+        )
+        .bind(assignment_name)
+        .bind(assignment_description)
+        .bind(deadline)
+        .bind(assignment_id)
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("{e}"));
+        }
+
+        if let Err(e) = sqlx::query(
+            "DELETE FROM tasks
+            WHERE assignment_id = $1;",
+        )
+        .bind(assignment_id)
+        .execute(&mut *transaction)
+        .await
+        {
+            return Err(format!("{e}"));
+        }
+
+        for (
+            i,
+            ReqTask {
+                task_description,
+                allow_editor,
+                material_base64,
+                material_filename,
+                timeout,
+                tests,
+            },
+        ) in tasks.iter().enumerate()
+        {
+            let material_bytes = material_base64
+                .as_ref()
+                .and_then(|f| Some(base64::prelude::BASE64_STANDARD.decode(f).unwrap()));
+
+            let task_row = match sqlx::query(
+                "INSERT INTO tasks (assignment_id, task_description, allow_editor, placement, supplementary_material, supplementary_filename)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id;"
+            ).bind(assignment_id)
+            .bind(task_description)
+            .bind(allow_editor)
+            .bind(i as i32)
+            .bind(material_bytes)
+            .bind(material_filename)
+            .fetch_one(&mut *transaction)
+            .await {
+                Ok(r) => r,
+                Err(e) => return Err(format!("{e}")),
+            };
+
+            let task_id: i32 = task_row.get("id");
+
+            for ReqTest {
+                test_name,
+                is_public,
+                input,
+                output,
+                input_file_base64,
+                output_file_base64,
+            } in tests
+            {
+                let input = if let Some(i_f) = &input_file_base64 {
+                    base64::prelude::BASE64_STANDARD
+                        .decode(i_f)
+                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .unwrap()
+                } else {
+                    input.clone().unwrap()
+                };
+
+                let output = if let Some(o_f) = &output_file_base64 {
+                    base64::prelude::BASE64_STANDARD
+                        .decode(o_f)
+                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .unwrap()
+                } else {
+                    output.clone().unwrap()
+                };
+
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO tests (task_id, test_name, input, output, public, timeout)
+                    VALUES ($1, $2, $3, $4, $5, $6);",
+                )
+                .bind(task_id)
+                .bind(test_name)
+                .bind(input)
+                .bind(output)
+                .bind(is_public)
+                .bind(timeout)
+                .execute(&mut *transaction)
+                .await
+                {
+                    return Err(format!("{e}"));
+                }
+            }
+        }
+
+        transaction.commit().await.unwrap();
+        return Ok(());
+    });
+
+    Err("Failed to acquire transaction lock".into())
+}

@@ -22,7 +22,7 @@ pub async fn handle_basic_auth(
 
     let Some(auth_header) = parts.headers.get(&AUTHORIZATION) else {
         return Response::builder()
-            .status(StatusCode::FORBIDDEN)
+            .status(StatusCode::UNAUTHORIZED)
             .body(Body::new("Not Authorized".to_string()))
             .unwrap();
     };
@@ -70,7 +70,7 @@ pub async fn handle_basic_auth(
             return resp;
         }
         Ok(false) => Response::builder()
-            .status(StatusCode::FORBIDDEN)
+            .status(StatusCode::UNAUTHORIZED)
             .body("Not Authorized.".into())
             .unwrap(),
         Err(e) => {

@@ -173,7 +173,7 @@ pub async fn init_database() -> Result<(), String> {
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-                assignment_id INTEGER REFERENCES assignments(id),
+                assignment_id INTEGER REFERENCES assignments(id) ON UPDATE CASCADE ON DELETE CASCADE,
                 task_description TEXT,
                 allow_editor BOOLEAN DEFAULT FALSE,
                 placement INTEGER NOT NULL,
@@ -193,7 +193,7 @@ pub async fn init_database() -> Result<(), String> {
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS tests (
                 id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-                task_id INTEGER NOT NULL REFERENCES tasks(id),
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON UPDATE CASCADE ON DELETE CASCADE,
                 test_name TEXT,
                 input TEXT NOT NULL,
                 output TEXT NOT NULL,
@@ -222,9 +222,9 @@ pub async fn init_database() -> Result<(), String> {
 
         if let Err(e) = sqlx::query(
             "CREATE TABLE IF NOT EXISTS user_task_grade (
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                task_id INTEGER NOT NULL REFERENCES tasks(id),
-                assignment_id INTEGER NOT NULL REFERENCES assignments(id),
+                user_id INTEGER NOT NULL REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON UPDATE CASCADE ON DELETE CASCADE,
                 json_results BYTEA,
                 submission_zip BYTEA,
                 grade FLOAT4,

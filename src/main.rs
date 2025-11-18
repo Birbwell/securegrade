@@ -64,7 +64,10 @@ async fn main() {
 
     // Add admin layer
     let app = app
-        .route("/api/admin/create_class", post(endpoints::admin::create_class))
+        .route(
+            "/api/admin/create_class",
+            post(endpoints::admin::create_class),
+        )
         .layer(from_fn(security::handle_admin_auth));
 
     // The instructor layer
@@ -88,7 +91,14 @@ async fn main() {
             "/api/instructor/{class_number}/add_assignment",
             post(endpoints::instructor::add_assignment),
         )
-        // .route("/api/update_assignment", put(update_assignment))
+        .route(
+            "/api/instructor/{class_number}/{assignment_id}/update_assignment",
+            put(endpoints::instructor::update_assignment),
+        )
+        .route(
+            "/api/instructor/{class_number}/{assignment_id}/retrieve_full_assignment",
+            get(endpoints::instructor::retrieve_full_assignment_info),
+        )
         .route(
             "/api/instructor/{class_number}/generate_join_code",
             get(endpoints::instructor::generate_join_code),

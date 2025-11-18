@@ -1,6 +1,6 @@
 use axum::{Json, body::Body, http::{Response, StatusCode}};
 
-use crate::{database, model::request::ClientRequest};
+use crate::{OK_JSON, database, model::request::ClientRequest};
 
 pub async fn create_class(Json(client_req): Json<ClientRequest>) -> Response<Body> {
     if let Err(e) = database::operations::new_class(client_req).await {
@@ -12,6 +12,6 @@ pub async fn create_class(Json(client_req): Json<ClientRequest>) -> Response<Bod
     };
     return Response::builder()
         .status(StatusCode::OK)
-        .body("OK".into())
+        .body(OK_JSON.into())
         .unwrap();
 }

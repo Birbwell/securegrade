@@ -16,7 +16,7 @@ pub struct Task {
     pub allow_editor: bool,
     pub material_base64: Option<String>,
     pub material_filename: Option<String>,
-    pub timeout: Option<u32>,
+    pub timeout: Option<i32>,
     pub tests: Vec<Test>
 }
 
@@ -47,7 +47,7 @@ pub struct ClientRequest {
     pub tasks: Option<Vec<Task>>,
 
     // Submission
-    pub assignment_id: Option<u32>,
+    pub assignment_id: Option<i32>,
     pub lang: Option<String>,
     pub zip_file: Option<Vec<u8>>,
 
