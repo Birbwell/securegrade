@@ -90,7 +90,7 @@ pub async fn container_queue(
 
                 let json_results = serde_json::to_vec(&results).unwrap();
 
-                database::assignment::operations::container_add_task_grade(
+                database::assignment::container_add_task_grade(
                     user_id,
                     task_id,
                     &json_results,
@@ -144,7 +144,7 @@ async fn run_container(
         .wait()
         .unwrap();
 
-    let task = match database::assignment::operations::container_get_task_details(task_id).await {
+    let task = match database::assignment::container_get_task_details(task_id).await {
         Ok(r) => r,
         Err(e) => return Err(e),
     };

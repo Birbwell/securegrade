@@ -33,7 +33,7 @@ pub async fn download_submission(Path(path_params): Path<Vec<String>>) -> Respon
     };
 
     let zip =
-        database::assignment::operations::download_submission(username.clone(), assignment_id)
+        database::assignment::download_submission(username.clone(), assignment_id)
             .await
             .unwrap();
 
@@ -97,7 +97,7 @@ pub async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<B
             .unwrap();
     };
 
-    let scores = database::assignment::operations::get_assignment_scores(assignment_id)
+    let scores = database::assignment::get_assignment_scores(assignment_id)
         .await
         .unwrap();
 
@@ -133,7 +133,7 @@ pub async fn add_assignment(
             .unwrap();
     };
 
-    if let Err(e) = database::assignment::operations::add_assignment(
+    if let Err(e) = database::assignment::add_assignment(
         class_number.into(),
         assignment_name,
         assignment_description,

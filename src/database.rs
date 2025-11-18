@@ -18,15 +18,21 @@ pub mod auth;
 pub mod operations;
 pub mod user;
 
+/// Static, global postgres connection pool
 static POSTGRES: LazyLock<RwLock<Option<Pool<Postgres>>>> = LazyLock::new(|| RwLock::new(None));
 
 /// Simplifies the syntax of acquiring the postgres lock, so to avoid reusing the same unnecessarily complex lines of code.
 /// 
 /// Acquires the postgres lock, assigns it to the identifier provided in the first parameter, then executes the block provided in the second parameter.
 /// 
+/// ## Usage:
+/// 
 /// ```
-/// postgres_lock(transaction, {
-///     let user_rows = sqlx::query("SELECT * FROM users;").fetch_all(&mut *transaction).await.unwrap();
+/// postgres_lock!(transaction, {
+///     let user_rows = sqlx::query("SELECT * FROM users;")
+///         .fetch_all(&mut *transaction)       // Identifier used here
+///         .await
+///         .unwrap();
 /// });
 /// ```
 #[macro_export]

@@ -22,8 +22,10 @@ mod endpoints;
 mod model;
 mod security;
 
+/// Basic nondescript OK request body, in case the client is looking for a JSON response.
 const OK_JSON: &'static str = r#"{ "message": "OK" }"#;
 
+/// Static, global mpsc channel Sender. Sends ContainerEntries to the container processing queue.
 static TX: OnceLock<tokio::sync::mpsc::Sender<ContainerEntry>> = OnceLock::new();
 
 #[tokio::main]

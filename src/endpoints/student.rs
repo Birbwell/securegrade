@@ -23,7 +23,7 @@ pub async fn download_material(Path(path_params): Path<Vec<String>>) -> Response
             .unwrap();
     };
 
-    let material = database::assignment::operations::download_material(task_id)
+    let material = database::assignment::download_material(task_id)
         .await
         .unwrap();
 
@@ -80,14 +80,14 @@ pub async fn handle_submission(
     let token = auth_header.to_str().unwrap().to_owned();
     let user_id = database::user::get_user_from_session(token).await.unwrap();
 
-    if database::assignment::operations::submission_in_progress(user_id, assignment_id).await {
+    if database::assignment::submission_in_progress(user_id, assignment_id).await {
         return Response::builder()
             .status(StatusCode::TOO_EARLY)
             .body("Previous submission still in queue. Check for results later.".into())
             .unwrap();
     }
 
-    if let Err(e) = database::assignment::operations::remove_old_grade(user_id, task_id).await {
+    if let Err(e) = database::assignment::remove_old_grade(user_id, task_id).await {
         tracing::error!(e);
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -95,7 +95,7 @@ pub async fn handle_submission(
             .unwrap();
     }
 
-    let was_late = match database::assignment::operations::mark_as_submitted(
+    let was_late = match database::assignment::mark_as_submitted(
         user_id,
         assignment_id,
         task_id,
@@ -167,14 +167,14 @@ pub async fn retrieve_task_score(
             .unwrap();
     };
 
-    if database::assignment::operations::submission_in_progress(user_id, task_id).await {
+    if database::assignment::submission_in_progress(user_id, task_id).await {
         return Response::builder()
             .status(StatusCode::TOO_EARLY)
             .body("Submission in progress".into())
             .unwrap();
     }
 
-    match database::assignment::operations::get_task_score(user_id, task_id).await {
+    match database::assignment::get_task_score(user_id, task_id).await {
         Ok(Some(res)) => {
             let res_json = serde_json::to_string(&res).unwrap();
             Response::builder()
@@ -204,7 +204,7 @@ pub async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Bo
             .unwrap();
     };
     let assignment_id = assignment_id.parse::<i32>().unwrap();
-    let ass = database::assignment::operations::get_assignment_info(assignment_id)
+    let ass = database::assignment::get_assignment_info(assignment_id)
         .await
         .unwrap();
 
@@ -227,7 +227,7 @@ pub async fn get_class_info(Path(path_params): Path<Vec<String>>, parts: Parts) 
     let user_id = database::user::get_user_from_session(token).await.unwrap();
 
     if let Some(class_number) = path_params.get(0) {
-        let assignments = database::assignment::operations::get_assignments_for_class(
+        let assignments = database::assignment::get_assignments_for_class(
             class_number.clone(),
             user_id,
         )

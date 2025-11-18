@@ -60,9 +60,7 @@ pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
     };
 
     // Add student
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
+    postgres_lock!(transaction, {
         if let Err(e) = sqlx::query(
             "INSERT INTO user_class (user_id, class_number, is_instructor)
                 SELECT id, $1, FALSE FROM users
@@ -76,7 +74,7 @@ pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
             return Err(format!("Unable to add to user_class table: {e}"));
         }
         transaction.commit().await.unwrap();
-    }
+    });
 
     Ok(())
 }
