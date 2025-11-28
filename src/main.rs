@@ -60,104 +60,107 @@ async fn main() {
     // Each layer acts as a layer of an onion, with the ones added first
     // acting as the centre of the onion, and the ones added last acting
     // as the outer layers
-    let app: Router = Router::new();
+    // let app: Router = Router::new();
 
     // Add admin layer
-    let app = app
-        .route(
-            "/api/admin/create_class",
-            post(endpoints::admin::create_class),
-        )
-        .layer(from_fn(security::handle_admin_auth));
+    let admin_routes: Router = Router::new()
+        .route("/create_class", post(endpoints::admin::create_class));
 
     // The instructor layer
     // All endpoints in this layer require a class_number path parameter.
     // Endpoints in this layer are accessible by instructors of the provided class number.
     // Admins are excluded.
-    let app = app
+    let instructor_routes: Router = Router::new()
         .route(
-            "/api/instructor/{class_number}/add_instructor",
+            "/{class_number}/add_instructor",
             put(endpoints::instructor::add_instructor),
         )
         .route(
-            "/api/instructor/{class_number}/{assignment_number}/download/{username}",
+            "/{class_number}/{assignment_number}/download/{username}",
             get(endpoints::instructor::download_submission),
         )
         .route(
-            "/api/instructor/{class_number}/{assignment_number}/retrieve_scores",
+            "/{class_number}/{assignment_number}/retrieve_scores",
             get(endpoints::instructor::retrieve_scores),
         )
         .route(
-            "/api/instructor/{class_number}/add_assignment",
+            "/{class_number}/add_assignment",
             post(endpoints::instructor::add_assignment),
         )
         .route(
-            "/api/instructor/{class_number}/{assignment_id}/update_assignment",
+            "/{class_number}/{assignment_id}/update_assignment",
             put(endpoints::instructor::update_assignment),
         )
         .route(
-            "/api/instructor/{class_number}/{assignment_id}/retrieve_full_assignment",
+            "/{class_number}/{assignment_id}/retrieve_full_assignment",
             get(endpoints::instructor::retrieve_full_assignment_info),
         )
         .route(
-            "/api/instructor/{class_number}/generate_join_code",
+            "/{class_number}/generate_join_code",
             get(endpoints::instructor::generate_join_code),
         )
         .route(
-            "/api/instructor/{class_number}/add_student",
+            "/{class_number}/add_student",
             put(endpoints::instructor::add_student),
         )
         .route(
-            "/api/instructor/{class_number}/list_all_students",
+            "/{class_number}/list_all_students",
             get(endpoints::list_all_students),
-        )
-        .layer(from_fn(security::handle_instructor_auth));
+        );
 
     // The student layer
     // These endpoints all require a class_number path parameter. They are accessible
     // by both students and instructors of that class. Admins are excluded.
-    let app = app
+    let student_routes: Router = Router::new()
         .route(
-            "/api/student/{class_number}/{assignment_id}/{task_id}/download_material",
+            "/{class_number}/{assignment_id}/{task_id}/download_material",
             get(endpoints::student::download_material),
         )
         .route(
-            "/api/student/{class_number}/{assignment_id}/{task_id}/submit",
+            "/{class_number}/{assignment_id}/{task_id}/submit",
             post(endpoints::student::handle_submission),
         )
         .route(
-            "/api/student/{class_number}/{assignment_id}/{task_id}/retrieve_score",
+            "/{class_number}/{assignment_id}/{task_id}/retrieve_score",
             get(endpoints::student::retrieve_task_score),
         )
         .route(
-            "/api/student/{class_number}/{assignment_id}",
+            "/{class_number}/{assignment_id}",
             get(endpoints::student::get_assignment),
         )
-        .route(
-            "/api/student/{class_number}",
-            get(endpoints::student::get_class_info),
-        )
-        .layer(from_fn(security::handle_student_auth));
+        .route("/{class_number}", get(endpoints::student::get_class_info));
 
     // The general User layer
     // These endpoints are accessible by all authenticated users
-    let app = app
-        .route("/api/join_class", put(endpoints::join_class))
-        .route("/api/get_classes", get(endpoints::get_classes))
-        .route("/api/list_all_students", get(endpoints::list_all_students))
+    let general_routes: Router = Router::new()
+        .route("/join_class", put(endpoints::join_class))
+        .route("/get_classes", get(endpoints::get_classes))
+        .route("/list_all_students", get(endpoints::list_all_students))
         .route(
-            "/api/get_supported_languages",
+            "/get_supported_languages",
             get(endpoints::supported_languages),
-        )
-        .layer(from_fn(security::handle_basic_auth));
+        );
 
     // The CORS and Max Body Limit layers
     // These endpoints are public
-    let app = app
-        .route("/api/login", post(endpoints::login))
-        .route("/api/signup", post(endpoints::signup))
+    let public_routes: Router = Router::new()
+        .route("/login", post(endpoints::login))
+        .route("/signup", post(endpoints::signup));
+
+    // Define the app, merging the routers
+    let app = Router::new()
+        .nest("/admin", admin_routes)
+        .layer(from_fn(security::handle_admin_auth))
+        .nest("/instructor", instructor_routes)
+        .layer(from_fn(security::handle_instructor_auth))
+        .nest("/student", student_routes)
+        .layer(from_fn(security::handle_student_auth))
+        .merge(general_routes)
+        .layer(from_fn(security::handle_basic_auth))
+        .merge(public_routes)
         .layer(cors)
         .layer(DefaultBodyLimit::max(usize::MAX));
+
 
     // Load the certificate for HTTPS
     let config =
