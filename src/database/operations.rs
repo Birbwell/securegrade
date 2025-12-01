@@ -83,10 +83,7 @@ pub async fn add_student(obj: ClientRequest) -> Result<(), String> {
 pub async fn list_all_students(
     exclude_from_class: Option<String>,
 ) -> Result<Vec<UserInfo>, String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let rows = if let Some(exclude) = exclude_from_class {
             match sqlx::query(
                 "SELECT DISTINCT first_name, last_name, user_name
@@ -126,10 +123,9 @@ pub async fn list_all_students(
             })
             .collect::<Vec<UserInfo>>();
 
-        Ok(users)
-    } else {
-        Err("Failed to acquire postgres lock".into())
-    }
+        return Ok(users);
+    });
+    Err("Failed to acquire Postgres lock".into())
 }
 
 /// Adds an instructor to a class
@@ -139,9 +135,7 @@ pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
     };
 
     // Add instructor
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
+    postgres_lock!(transaction, {
         if let Err(e) = sqlx::query(
             "INSERT INTO user_class (user_id, class_number, is_instructor)
                 SELECT id, $1, TRUE FROM users
@@ -155,16 +149,14 @@ pub async fn add_instructor(obj: ClientRequest) -> Result<(), String> {
             return Err(format!("Unable to add to user_class table: {e}"));
         }
         transaction.commit().await.unwrap();
-    }
+    });
 
     Ok(())
 }
 
 /// Gets list of classes that a given user is associated with (either as a student or as an instructor).
 pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
+    postgres_lock!(transaction, {
         let rows = match sqlx::query(
             "SELECT c.class_number, c.class_description
             FROM classes c
@@ -194,7 +186,7 @@ pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
         transaction.commit().await.unwrap();
 
         return Ok(class_items);
-    }
+    });
 
     Err("Server Error".into())
 }
@@ -203,10 +195,7 @@ pub async fn get_classes(user_id: i32) -> Result<Vec<ClassItem>, String> {
 pub async fn get_instructors(
     class_number: impl Into<String>,
 ) -> Result<Vec<InstructorInfo>, String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let rows = match sqlx::query(
             "SELECT DISTINCT first_name, last_name, email
             FROM users
@@ -234,7 +223,7 @@ pub async fn get_instructors(
             .collect::<Vec<InstructorInfo>>();
 
         return Ok(user_info);
-    }
+    });
 
     Err("Could not acquire database lock".into())
 }
@@ -259,7 +248,7 @@ pub async fn add_join_code(join_code: String, class_number: String) -> Result<()
         return Ok(());
     });
 
-    return Err("Failed to acquire transaction lock".into());
+    Err("Failed to acquire transaction lock".into())
 }
 
 /// Adds the provided user_id to a class should there be an unexpired join_code associated with a class
@@ -299,5 +288,5 @@ pub async fn join_class(user_id: i32, join_code: String) -> Result<bool, String>
         return Ok(true);
     });
 
-    return Err("Failed to acquire transaction lock".into());
+    Err("Failed to acquire transaction lock".into())
 }

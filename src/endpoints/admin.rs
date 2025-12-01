@@ -10,8 +10,8 @@ pub async fn create_class(Json(client_req): Json<ClientRequest>) -> Response<Bod
             .body("Internal Error".into())
             .unwrap();
     };
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(OK_JSON.into())
-        .unwrap();
+        .unwrap()
 }

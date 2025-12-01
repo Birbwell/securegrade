@@ -39,7 +39,7 @@ static POSTGRES: LazyLock<RwLock<Option<Pool<Postgres>>>> = LazyLock::new(|| RwL
 macro_rules! postgres_lock {
     ($transaction: ident, $($body: tt)*) => {
         let postgres_pool = POSTGRES.read().await;
-        if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
+        if let Some(transaction_future) = postgres_pool.as_ref().map(|f| f.begin()) {
             let mut $transaction = transaction_future.await.unwrap();
             $($body)*
         }

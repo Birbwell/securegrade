@@ -24,12 +24,12 @@ impl ImageBuilder {
 
     /// Build the docker container object
     pub fn build(self) -> Result<Image, String> {
-        let container = Command::new("podman")
+        let container = Command::new("docker")
             .args(["buildx", "build", "-q", &self.directory])
             .output()
             .unwrap();
 
-        if container.stderr.len() > 0 {
+        if !container.stderr.is_empty() {
             let err_str = String::from_utf8(container.stderr)
                 .unwrap()
                 .trim()
@@ -59,7 +59,7 @@ impl Image {
         stdin: impl AsRef<[u8]>,
         duration: Option<Duration>,
     ) -> Result<Option<String>, String> {
-        let mut child = Command::new("podman")
+        let mut child = Command::new("docker")
             .args(["run", "-i", &self.image_id])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -90,7 +90,7 @@ impl Image {
             child.wait_with_output().unwrap()
         };
 
-        if process_output.stderr.len() > 0 {
+        if !process_output.stderr.is_empty() {
             let err_str = String::from_utf8(process_output.stderr)
                 .unwrap()
                 .trim()

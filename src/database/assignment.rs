@@ -16,14 +16,15 @@ enum Method {
     Http(u16),
 }
 
-impl Into<Method> for String {
-    fn into(self) -> Method {
-        if self == "stdio" {
+impl From<String> for Method {
+    fn from(value: String) -> Self {
+        if value == "stdio" {
             Method::Stdio
         } else {
-            let [_, port] = &self.split(':').collect::<Vec<&str>>()[..] else {
-                panic!("INVALID DATA FOUND IN DATABASE");
+            let [_, port] = &value.split(":").collect::<Vec<&str>>()[..] else {
+                panic!("Invalid port specified");
             };
+
             let p = port.parse::<u16>().unwrap();
             Method::Http(p)
         }
@@ -119,7 +120,7 @@ pub async fn get_assignment_info(assignment_id: i32) -> Result<Assignment, Strin
             .collect::<Vec<Task>>();
 
         return Ok(Assignment {
-            assignment_id: assignment_id,
+            assignment_id,
             name: assignment_name,
             description: assignment_desc,
             tasks,
@@ -152,7 +153,7 @@ pub async fn container_get_task_details(task_id: i32) -> Result<Vec<Test>, Strin
                 let timeout: Option<i32> = row.get("timeout");
                 let test_name: Option<String> = row.get("test_name");
 
-                let timeout = timeout.and_then(|f| Some(std::time::Duration::from_secs(f as u64)));
+                let timeout = timeout.map(|f| std::time::Duration::from_secs(f as u64));
 
                 Test {
                     test_name,
@@ -203,7 +204,7 @@ pub async fn get_assignments_for_class(
             let assignment_score = get_assignment_score(user_id, assignment_id)
                 .await
                 .unwrap()
-                .and_then(|f| Some(f.score))
+                .map(|f| f.score)
                 .unwrap_or_default();
 
             assignments.push(AssignmentInfo {
@@ -259,8 +260,7 @@ pub async fn retrieve_full_assignment_info(
             let timeout = None::<i32>;
             let material_vec: Option<Vec<u8>> = task.get("supplementary_material");
 
-            let material_base64 =
-                material_vec.and_then(|f| Some(base64::prelude::BASE64_STANDARD.encode(f)));
+            let material_base64 = material_vec.map(|f| base64::prelude::BASE64_STANDARD.encode(f));
 
             let test_rows = match sqlx::query(
                 "SELECT * FROM tests
@@ -322,10 +322,7 @@ pub async fn add_assignment(
     deadline: String,
     tasks: Vec<ReqTask>,
 ) -> Result<(), String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let deadline_date_time: DateTime<Utc> = match deadline.parse() {
             Ok(d) => d,
             Err(e) => return Err(format!("Could not parse deadline: {e}")),
@@ -385,7 +382,7 @@ pub async fn add_assignment(
                 let input = if let Some(i_f) = &test.input_file_base64 {
                     base64::prelude::BASE64_STANDARD
                         .decode(i_f)
-                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .map(|f| String::from_utf8(f).unwrap())
                         .unwrap()
                 } else {
                     test.input.clone().unwrap()
@@ -394,7 +391,7 @@ pub async fn add_assignment(
                 let output = if let Some(o_f) = &test.output_file_base64 {
                     base64::prelude::BASE64_STANDARD
                         .decode(o_f)
-                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .map(|f| String::from_utf8(f).unwrap())
                         .unwrap()
                 } else {
                     test.output.clone().unwrap()
@@ -408,7 +405,7 @@ pub async fn add_assignment(
                 .bind(input)
                 .bind(output)
                 .bind(test.is_public)
-                .bind(task.timeout.map(|f| f as i32))
+                .bind(task.timeout)
                 .bind(&test.test_name)
                 .execute(&mut *transaction)
                 .await
@@ -421,7 +418,7 @@ pub async fn add_assignment(
         transaction.commit().await.unwrap();
 
         return Ok(());
-    }
+    });
 
     Err("Failed to acquire database lock".into())
 }
@@ -434,10 +431,7 @@ pub async fn mark_as_submitted(
     submission_time: DateTime<Utc>,
     zip_file: Bytes,
 ) -> Result<bool, String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let deadline: DateTime<Utc> =
             match sqlx::query("SELECT deadline FROM assignments WHERE id = $1;")
                 .bind(assignment_id)
@@ -468,7 +462,7 @@ pub async fn mark_as_submitted(
         transaction.commit().await.unwrap();
 
         return Ok(was_late);
-    }
+    });
 
     Err("Failed to acquire database lock".into())
 }
@@ -479,10 +473,7 @@ pub async fn container_add_task_grade(
     results: &[u8],
     grade: f32,
 ) -> Result<(), String> {
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         if let Err(e) = sqlx::query(
             "UPDATE user_task_grade
             SET json_results = $1, grade = $2
@@ -501,7 +492,7 @@ pub async fn container_add_task_grade(
         transaction.commit().await.unwrap();
 
         return Ok(());
-    }
+    });
 
     Err("Failed to acquire database lock".into())
 }
@@ -616,7 +607,7 @@ pub async fn get_assignment_score(
         return Ok(Some(total_grade));
     });
 
-    return Err("Failed to acquire database lock".into());
+    Err("Failed to acquire database lock".into())
 }
 
 pub async fn get_assignment_scores(assignment_id: i32) -> Result<Vec<AssignmentGrade>, String> {
@@ -752,7 +743,7 @@ pub async fn download_submission(
             .args([
                 "-rj",
                 &format!("{}/{}-{}.zip", workdir, username, assignment_id),
-                &format!("{}", workdir),
+                &workdir,
             ])
             .spawn()
             .unwrap()
@@ -803,17 +794,15 @@ pub async fn download_material(task_id: i32) -> Result<Option<(String, String)>,
 
 pub async fn submission_in_progress(user_id: i32, task_id: i32) -> bool {
     postgres_lock!(transaction, {
-        return match sqlx::query(
-            "SELECT * FROM user_task_grade WHERE user_id = $1 AND task_id = $2 AND grade IS NULL;",
-        )
-        .bind(user_id)
-        .bind(task_id)
-        .fetch_optional(&mut *transaction)
-        .await
-        {
-            Ok(Some(_)) => true,
-            _ => false,
-        };
+        return matches!(sqlx::query(
+                "SELECT * FROM user_task_grade WHERE user_id = $1 AND task_id = $2 AND grade IS NULL;"
+            )
+                .bind(user_id)
+                .bind(task_id)
+                .fetch_optional(&mut *transaction)
+                .await,
+            Ok(Some(_))
+        );
     });
 
     false
@@ -832,7 +821,7 @@ pub async fn remove_old_grade(user_id: i32, task_id: i32) -> Result<(), String> 
         return Ok(());
     });
 
-    return Err("Failed to acquire transaction lock".into());
+    Err("Failed to acquire transaction lock".into())
 }
 
 pub async fn update_assignment(
@@ -887,7 +876,7 @@ pub async fn update_assignment(
         {
             let material_bytes = material_base64
                 .as_ref()
-                .and_then(|f| Some(base64::prelude::BASE64_STANDARD.decode(f).unwrap()));
+                .map(|f| base64::prelude::BASE64_STANDARD.decode(f).unwrap());
 
             let task_row = match sqlx::query(
                 "INSERT INTO tasks (assignment_id, task_description, allow_editor, placement, supplementary_material, supplementary_filename)
@@ -919,7 +908,7 @@ pub async fn update_assignment(
                 let input = if let Some(i_f) = &input_file_base64 {
                     base64::prelude::BASE64_STANDARD
                         .decode(i_f)
-                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .map(|f| String::from_utf8(f).unwrap())
                         .unwrap()
                 } else {
                     input.clone().unwrap()
@@ -928,7 +917,7 @@ pub async fn update_assignment(
                 let output = if let Some(o_f) = &output_file_base64 {
                     base64::prelude::BASE64_STANDARD
                         .decode(o_f)
-                        .and_then(|f| Ok(String::from_utf8(f).unwrap()))
+                        .map(|f| String::from_utf8(f).unwrap())
                         .unwrap()
                 } else {
                     output.clone().unwrap()

@@ -41,7 +41,7 @@ pub async fn handle_basic_auth(
             let is_admin = session_is_admin(token.clone())
                 .await
                 .unwrap();
-            let (is_instructor, is_student) = if let Some(class_number) = path_params.get(0) {
+            let (is_instructor, is_student) = if let Some(class_number) = path_params.first() {
                 (
                     session_is_instructor(class_number.clone(), token.clone())
                         .await
@@ -67,7 +67,7 @@ pub async fn handle_basic_auth(
                 HeaderValue::from_str(&is_student.to_string()).unwrap(),
             );
 
-            return resp;
+            resp
         }
         Ok(false) => Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -105,7 +105,7 @@ pub async fn handle_student_auth(
         .map(|u| *u as char)
         .collect::<String>();
 
-    if let Some(class_number) = path_params.get(0) {
+    if let Some(class_number) = path_params.first() {
         let is_auth =
             match session_is_student(class_number.clone(), token.clone()).await {
                 Ok(t) => t,
@@ -184,7 +184,7 @@ pub async fn handle_instructor_auth(
         .map(|u| *u as char)
         .collect::<String>();
 
-    if let Some(class_number) = path_params.get(0) {
+    if let Some(class_number) = path_params.first() {
         let is_auth = match session_is_instructor(class_number.clone(), token).await {
             Ok(t) => t,
             Err(e) => {

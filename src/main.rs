@@ -23,7 +23,7 @@ mod model;
 mod security;
 
 /// Basic nondescript OK request body, in case the client is looking for a JSON response.
-const OK_JSON: &'static str = r#"{ "message": "OK" }"#;
+const OK_JSON: &str = r#"{ "message": "OK" }"#;
 
 /// Static, global mpsc channel Sender. Sends ContainerEntries to the container processing queue.
 static TX: OnceLock<tokio::sync::mpsc::Sender<ContainerEntry>> = OnceLock::new();
@@ -187,7 +187,7 @@ async fn main() {
     });
 
     // Make the sender portion of the channel global, so it can be accessed across all threads
-    _ = TX.set(tx).unwrap();
+    TX.set(tx).unwrap();
 
     // Serve the application on port 9090
     let server = axum_server::bind_rustls("0.0.0.0:9090".parse::<SocketAddr>().unwrap(), config);

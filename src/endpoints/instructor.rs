@@ -48,11 +48,11 @@ pub async fn download_submission(Path(path_params): Path<Vec<String>>) -> Respon
             .unwrap();
     };
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/zip")
         .body(zip.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn generate_join_code(Path(class_number): Path<String>) -> Response<Body> {
@@ -65,10 +65,10 @@ pub async fn generate_join_code(Path(class_number): Path<String>) -> Response<Bo
         .await
         .unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(format!(r#"{{ "join_code": "{join_code}" }}"#).into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn add_student(Json(client_req): Json<ClientRequest>) -> Response<Body> {
@@ -106,10 +106,10 @@ pub async fn retrieve_scores(Path(path_params): Path<Vec<String>>) -> Response<B
         .unwrap();
 
     let scores_json = serde_json::to_string(&scores).unwrap();
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(scores_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn retrieve_full_assignment_info(Path(path_params): Path<Vec<String>>) -> Response<Body> {
@@ -139,10 +139,10 @@ pub async fn retrieve_full_assignment_info(Path(path_params): Path<Vec<String>>)
             }
         };
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(full_assignment_info.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn add_assignment(

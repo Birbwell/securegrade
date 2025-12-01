@@ -23,7 +23,8 @@ pub struct InputOutput {
 impl SubmissionResponse {
     pub fn pass(&mut self, test_name: Option<impl Into<String>>, was_late: bool) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: if was_late { "LATE".into() } else { "PASS".into() },
             input_output: None,
         });
@@ -39,7 +40,8 @@ impl SubmissionResponse {
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: if was_late { "LATE".into() } else { "PASS".into() },
             input_output: Some(InputOutput {
                 input: input.into(),
@@ -53,7 +55,8 @@ impl SubmissionResponse {
     pub fn fail(&mut self, test_name: Option<impl Into<String>>) {
         // self.tests.push((test_name.into(), TestStatus::Fail));
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "FAIL".into(),
             input_output: None,
         })
@@ -67,7 +70,8 @@ impl SubmissionResponse {
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "FAIL".into(),
             input_output: Some(InputOutput {
                 input: input.into(),
@@ -80,7 +84,8 @@ impl SubmissionResponse {
     pub fn time_out(&mut self, test_name: Option<impl Into<String>>) {
         // self.tests.push((test_name.into(), TestStatus::TimeOut));
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "TIMED OUT".into(),
             input_output: None,
         })
@@ -93,7 +98,8 @@ impl SubmissionResponse {
         expected: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "TIMED OUT".into(),
             input_output: Some(InputOutput {
                 input: input.into(),
@@ -105,7 +111,8 @@ impl SubmissionResponse {
 
     pub fn err(&mut self, test_name: Option<impl Into<String>>) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "ERR".into(),
             input_output: None,
         })
@@ -119,7 +126,8 @@ impl SubmissionResponse {
         found: impl Into<String>,
     ) {
         self.tests.push(Test {
-            test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            // test_name: test_name.and_then(|f| Some(f.into())).unwrap_or("".into()),
+            test_name: test_name.map(|f| f.into()).unwrap_or("".into()),
             status: "ERR".into(),
             input_output: Some(InputOutput {
                 input: input.into(),

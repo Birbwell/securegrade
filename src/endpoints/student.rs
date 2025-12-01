@@ -37,10 +37,10 @@ pub async fn download_material(Path(path_params): Path<Vec<String>>) -> Response
     let material_resp = SupplementaryMaterial { material, filename };
     let material_resp_json = serde_json::to_string(&material_resp).unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(material_resp_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn handle_submission(
@@ -69,7 +69,7 @@ pub async fn handle_submission(
     let Some(lang) = parts
         .headers
         .get("Language")
-        .and_then(|f| f.to_str().and_then(|f| Ok(f.to_owned())).ok())
+        .and_then(|f| f.to_str().map(|f| f.to_owned()).ok())
     else {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -128,10 +128,10 @@ pub async fn handle_submission(
             .unwrap();
     }
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(OK_JSON.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn retrieve_task_score(
@@ -210,10 +210,10 @@ pub async fn get_assignment(Path(path_params): Path<Vec<String>>) -> Response<Bo
 
     let ass_json = serde_json::to_string(&ass).unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(ass_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 pub async fn get_class_info(Path(path_params): Path<Vec<String>>, parts: Parts) -> Response<Body> {
@@ -226,7 +226,7 @@ pub async fn get_class_info(Path(path_params): Path<Vec<String>>, parts: Parts) 
 
     let user_id = database::user::get_user_from_session(token).await.unwrap();
 
-    if let Some(class_number) = path_params.get(0) {
+    if let Some(class_number) = path_params.first() {
         let assignments = database::assignment::get_assignments_for_class(
             class_number.clone(),
             user_id,
@@ -242,14 +242,14 @@ pub async fn get_class_info(Path(path_params): Path<Vec<String>>, parts: Parts) 
 
         let class_json = serde_json::to_string(&class_info).unwrap();
 
-        return Response::builder()
+        Response::builder()
             .status(StatusCode::OK)
             .body(class_json.into())
-            .unwrap();
+            .unwrap()
     } else {
-        return Response::builder()
+        Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body("Bad Request.".into())
-            .unwrap();
+            .unwrap()
     }
 }

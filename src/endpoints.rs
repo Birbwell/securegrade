@@ -79,17 +79,17 @@ pub async fn get_classes(parts: Parts) -> Response<Body> {
     let class_items = database::operations::get_classes(user_id).await.unwrap();
     let class_items_json = serde_json::to_string(&class_items).unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(class_items_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 /// Lists all the students using the platform. Instructors use this to facilitate with auto completion.
 /// 
 /// A class_number can be optionally provided to exclude students from that class (as they do not need to be in the auto complete)
 pub async fn list_all_students(class_number: Option<Path<String>>) -> Response<Body> {
-    let class_number = class_number.and_then(|f| Some(f.0));
+    let class_number = class_number.map(|f| f.0);
 
     let user_info = match database::operations::list_all_students(class_number).await {
         Ok(user_info) => user_info,
@@ -104,10 +104,10 @@ pub async fn list_all_students(class_number: Option<Path<String>>) -> Response<B
 
     let users_json = serde_json::to_string(&user_info).unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(users_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 /// Returns a list of languages the backend supports
@@ -128,10 +128,10 @@ pub async fn supported_languages() -> Response<Body> {
 
     let item_json = serde_json::to_string(&items).unwrap();
 
-    return Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .body(item_json.into())
-        .unwrap();
+        .unwrap()
 }
 
 /// Logins a user provided their username and password

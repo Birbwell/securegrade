@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
-use crate::database::POSTGRES;
+use crate::{database::POSTGRES, postgres_lock};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Session {
@@ -26,10 +26,7 @@ pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
         return Err("Invalid token format".into());
     };
     let session_hash = Sha512::digest(session_id).to_vec();
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let row = match sqlx::query(
             "SELECT user_id, expiration FROM user_session WHERE session_hash = $1;",
         )
@@ -56,7 +53,7 @@ pub async fn session_exists_and_valid(token: String) -> Result<bool, String> {
 
         transaction.commit().await.unwrap();
         return Ok(true);
-    }
+    });
 
     Ok(false)
 }
@@ -69,10 +66,7 @@ pub async fn session_is_student(
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let row = match sqlx::query(
             "SELECT user_id, expiration FROM user_session WHERE session_hash = $1;",
         )
@@ -128,9 +122,8 @@ pub async fn session_is_student(
             }
             Err(e) => return Err(format!("An unexpected error occured: {e}")),
         };
-    }
-    Ok(false)            // Ok(Some(_)) => return Ok(true),
-
+    });
+    Ok(false) // Ok(Some(_)) => return Ok(true),
 }
 
 /// Checks if the session token provided matches that of a user who is an instructor of the provided class number.
@@ -141,10 +134,7 @@ pub async fn session_is_instructor(
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let row = match sqlx::query(
             "SELECT user_id, expiration FROM user_session WHERE session_hash = $1;",
         )
@@ -201,7 +191,8 @@ pub async fn session_is_instructor(
         let is_instructor: bool = row.get("is_instructor");
         transaction.commit().await.unwrap();
         return Ok(is_instructor);
-    }
+    });
+
     Ok(false)
 }
 
@@ -210,10 +201,7 @@ pub async fn session_is_admin(token: impl AsRef<[u8]>) -> Result<bool, String> {
     let session_hash = BASE64_STANDARD.decode(token).unwrap();
     let session_id = Sha512::digest(session_hash).to_vec();
 
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let row = match sqlx::query(
             "SELECT user_id, expiration FROM user_session WHERE session_hash = $1;",
         )
@@ -254,6 +242,6 @@ pub async fn session_is_admin(token: impl AsRef<[u8]>) -> Result<bool, String> {
         }
 
         transaction.commit().await.unwrap();
-    }
+    });
     Ok(false)
 }

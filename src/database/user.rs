@@ -2,7 +2,7 @@ use base64::{Engine, prelude::BASE64_STANDARD};
 use sha2::{Digest, Sha512};
 use sqlx::Row;
 
-use crate::model::request::ClientRequest;
+use crate::{model::request::ClientRequest, postgres_lock};
 
 use super::POSTGRES;
 
@@ -15,21 +15,18 @@ fn create_hash(user_name: impl Into<Vec<u8>>, pass: impl Into<Vec<u8>>) -> Vec<u
     let first_half_user_name = &user_name[0..name_len / 2];
     let last_half_user_name = &user_name[name_len / 2..];
 
-    let secret_sauce = vec![first_half_user_name, &pass, last_half_user_name].concat();
+    let secret_sauce = [first_half_user_name, &pass, last_half_user_name].concat();
     Sha512::digest(secret_sauce).to_vec()
 }
 
 /// Provided a session token, retrieve the user_id of the associated user.
-/// 
+///
 /// This allows all operations to be associated with the user, eliminating the risk of someone acting on someone else's behalf (by, for example, providing a different user id than their own).
 pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32> {
     let session_id = BASE64_STANDARD.decode(session_base).unwrap();
     let session_hash = Sha512::digest(session_id).to_vec();
 
-    let postgres_pool = POSTGRES.read().await;
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let mut transaction = transaction_future.await.unwrap();
-
+    postgres_lock!(transaction, {
         let row = sqlx::query("SELECT user_id FROM user_session WHERE session_hash = $1;")
             .bind(session_hash)
             .fetch_one(&mut *transaction)
@@ -38,26 +35,20 @@ pub async fn get_user_from_session(session_base: impl AsRef<[u8]>) -> Option<i32
 
         let id: i32 = row.get("user_id");
         return Some(id);
-    }
+    });
     None
 }
 
 /// Registers a new user provided their credentials.
 pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = new_user.get_login() else {
-        return Err(format!("Missing fields user_name or pass in request"));
+        return Err("Missing fields user_name or pass in request".into());
     };
 
     let hash = create_hash(user_name, pass);
 
-    {
-        let postgres_pool = POSTGRES.read().await;
-        if let Some(transaction) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-            let Ok(mut transaction) = transaction.await else {
-                return Err("Unable to lock database transaction".into());
-            };
-
-            let id: i32 = match sqlx::query(
+    postgres_lock!(transaction, {
+        let id: i32 = match sqlx::query(
             "INSERT INTO users (first_name, last_name, user_name, email) VALUES ($1, $2, $3, $4) RETURNING id;",
             )
             .bind(new_user.first_name.clone())
@@ -70,42 +61,37 @@ pub async fn register_user(new_user: ClientRequest) -> Result<[u8; 16], String> 
                 Err(e) => return Err(format!("Could not insert into database: {e}")),
             };
 
-            if sqlx::query("INSERT INTO user_auth (hash, user_id) VALUES ($1, $2);")
-                .bind(hash)
-                .bind(id)
-                .execute(&mut *transaction)
-                .await
-                .is_err()
-            {
-                return Err("Could not add to authentication table".into());
-            }
-
-            if let Err(e) = transaction.commit().await {
-                return Err(format!("Could not commit database transaction: {e}"));
-            }
-        } else {
-            return Err("Could not create user".into());
+        if sqlx::query("INSERT INTO user_auth (hash, user_id) VALUES ($1, $2);")
+            .bind(hash)
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+            .is_err()
+        {
+            return Err("Could not add to authentication table".into());
         }
-    }
 
-    tracing::info!("User Created");
-    Ok(login_user(new_user).await?)
+        if let Err(e) = transaction.commit().await {
+            return Err(format!("Could not commit database transaction: {e}"));
+        }
+
+        tracing::info!("User Created");
+        return login_user(new_user).await;
+    });
+
+    Err("Failed to acquire transaction lock".into())
 }
 
 /// Logins a user provided their credentials.
 pub async fn login_user(user: ClientRequest) -> Result<[u8; 16], String> {
     let Some((user_name, pass)) = user.get_login() else {
-        return Err(format!("Missing fields user_name or pass"));
+        return Err("Missing fields user_name or pass".into());
     };
 
     let hash = create_hash(user_name, pass);
-    let postgres_pool = POSTGRES.read().await;
     let mut session_id = [0u8; 16];
-    if let Some(transaction_future) = postgres_pool.as_ref().and_then(|f| Some(f.begin())) {
-        let Ok(mut transaction) = transaction_future.await else {
-            panic!();
-        };
 
+    postgres_lock!(transaction, {
         let Ok(Some(out)) = sqlx::query("SELECT * FROM user_auth WHERE hash = $1;")
             .bind(hash)
             .fetch_optional(&mut *transaction)
@@ -149,9 +135,8 @@ pub async fn login_user(user: ClientRequest) -> Result<[u8; 16], String> {
         }
 
         tracing::info!("Logged in user {}", id);
-    } else {
-        return Err("Could not begin transaction".into());
-    }
+        return Ok(session_id);
+    });
 
-    Ok(session_id)
+    Err("Failed to acquire transaction lock".into())
 }

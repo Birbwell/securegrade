@@ -132,7 +132,7 @@ async fn run_container(
     )
     .unwrap();
 
-    std::fs::write(&format!("{workdir}/submission.zip"), zip_file).unwrap();
+    std::fs::write(format!("{workdir}/submission.zip"), zip_file).unwrap();
     Command::new("unzip")
         .args([
             &format!("{workdir}/submission.zip"),
@@ -196,17 +196,15 @@ async fn run_container(
             } else {
                 test_results.pass(test_name.clone(), was_late);
             }
+        } else if *public {
+            test_results.pub_fail(
+                test_name.clone(),
+                input.trim(),
+                output.trim(),
+                container_output.trim(),
+            );
         } else {
-            if *public {
-                test_results.pub_fail(
-                    test_name.clone(),
-                    input.trim(),
-                    output.trim(),
-                    container_output.trim(),
-                );
-            } else {
-                test_results.fail(test_name.clone());
-            }
+            test_results.fail(test_name.clone());
         }
     }
 
