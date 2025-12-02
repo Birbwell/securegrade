@@ -46,6 +46,8 @@ macro_rules! postgres_lock {
     };
 }
 
+/// Initializes the database, creating the necessary tables if they dont exist
+/// and instantiates the database connection pool
 pub async fn init_database() -> Result<(), String> {
     let Ok(name) = var("PSQL_NAME") else {
         return Err("PSQL_NAME environment variable not present".into());

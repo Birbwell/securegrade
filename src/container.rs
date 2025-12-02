@@ -1,3 +1,5 @@
+//! Contains the necessary functions for building, running, and evaluating containerized submissions
+
 use std::{
     fs::{copy, create_dir_all, read_dir, remove_dir_all},
     path::PathBuf,
