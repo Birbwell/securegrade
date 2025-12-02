@@ -10,26 +10,30 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::Row;
 
-#[derive(Serialize)]
-enum Method {
-    Stdio,
-    Http(u16),
-}
+// #[derive(Serialize)]
+// enum Method {
+//     Stdio,
+//     Http(u16),
+// }
 
-impl From<String> for Method {
-    fn from(value: String) -> Self {
-        if value == "stdio" {
-            Method::Stdio
-        } else {
-            let [_, port] = &value.split(":").collect::<Vec<&str>>()[..] else {
-                panic!("Invalid port specified");
-            };
+// impl<T> From<T> for Method
+// where
+//     T: Into<String>,
+// {
+//     fn from(value: T) -> Self {
+//         let value = value.into();
+//         if value == "stdio" {
+//             Method::Stdio
+//         } else {
+//             let [_, port] = &value.split(":").collect::<Vec<&str>>()[..] else {
+//                 panic!("Invalid port specified");
+//             };
 
-            let p = port.parse::<u16>().unwrap();
-            Method::Http(p)
-        }
-    }
-}
+//             let p = port.parse::<u16>().unwrap();
+//             Method::Http(p)
+//         }
+//     }
+// }
 
 #[derive(Serialize)]
 pub struct Assignment {
